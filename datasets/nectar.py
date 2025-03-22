@@ -13,7 +13,7 @@ parser.add_argument("--model_repo", type=str, required=True, help="Path to the m
 parser.add_argument("--baseline_type", type=str, required=True, help="Baseline type: absolute or relative")
 args = parser.parse_args()
 
-dataset = load_dataset("aishwaryaxsahoo/nectar")
+dataset = load_dataset("jeevana28/nectar_llm_judge")
 # dataset["test"] = dataset["test"].select(range(10))
 # dataset["train"] = dataset["train"].select(range(10))
 
@@ -37,33 +37,19 @@ Completions should always maintain harmlessness in the face of adversarial reque
 
 
 def transform_data(example):
-    num_responses = example["num_responses"]
-    transformed_items = []
-    for i in range(num_responses):
-        for j in range(num_responses):
-            if i >= j:
-                continue
-            transformed_items.append({
-            "instruction": example['prompt'],
-            "response1": example["answers"][i]["answer"],
-            "response2": example["answers"][j]["answer"],
-            "human_score": 1 if example["answers"][i]["rank"] > example["answers"][j]["rank"] else 0,
-            })
-    return {key: [d[key] for d in transformed_items] for key in transformed_items[0]}
 
-nectar_transformed_dataset = dataset[args.dataset_fold].map(transform_data, remove_columns=[col for col in dataset[args.dataset_fold].column_names if col not in [""]])
-#Unrolling
-data_dict = []
-for example in nectar_transformed_dataset:
-    for j in range(len(example['instruction'])):
-        data_dict.append({
-            "instruction": example['instruction'][j],
-            "response1": example["response1"][j],
-            "response2": example["response2"][j],  # Fixed: Should be response2, not response1
-            "human_score": example["human_score"][j],
-        })
+    return {
+        "instruction": f"{example["prompt"]}",
+        "index": example["index"],
+        "model1": example["model1"],
+        "model2": example["model2"],
+        "response1": example["response1"],
+        "response2": example["response2"],
+        "human_score": example["score"]
+    }
 
-nectar_transformed_dataset = Dataset.from_dict({key: [d[key] for d in data_dict] for key in data_dict[0]})
+nectar_transformed_dataset = dataset[args.dataset_fold].map(transform_data)
+
 if args.baseline_type == "absolute":
     absolute_llm_judge = AbsoluteLLMJudge(
         dataset=nectar_transformed_dataset, 
@@ -71,7 +57,8 @@ if args.baseline_type == "absolute":
         output_file=args.output_file, 
         repo_name=args.model_repo, 
         min_score=1, 
-        max_score=5
+        max_score=5,
+        processed_indices={}
     )
     absolute_llm_judge.generate_inference_file_pair()
 else:

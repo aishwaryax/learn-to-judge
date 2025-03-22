@@ -8,13 +8,14 @@ from transformers import AutoTokenizer
 from pathlib import Path
 
 class AbsoluteLLMJudge:
-    def __init__(self, dataset, rubrics, output_file, repo_name, min_score=1, max_score=5):
+    def __init__(self, dataset, rubrics, output_file, repo_name, min_score=1, max_score=5, processed_indices={}):
         self.dataset = dataset
         self.rubrics = rubrics
         self.output_file = output_file
         self.min_score = min_score
         self.max_score = max_score
         self._load_model_tokenizer(repo_name)
+        self.processed_indices = processed_indices
         
     def _load_model_tokenizer(self, repo_name):
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -44,6 +45,7 @@ class AbsoluteLLMJudge:
 
         ###Feedback: """
 
+        ABSOLUTE_PROMPT_WO_REF = ABSOLUTE_PROMPT_WO_REF.replace("{", "{{").replace("}", "}}")
         user_content = ABS_SYSTEM_PROMPT + "\n\n" + ABSOLUTE_PROMPT_WO_REF.format(instruction=safe_instruction, response=safe_response, rubrics=self.rubrics)
         sampling_params = SamplingParams(max_tokens=1000, temperature=0.1, top_p=0.9, top_k=50)
         outputs = self.llm.generate([user_content], sampling_params)
@@ -92,6 +94,7 @@ class AbsoluteLLMJudge:
                 continue
             response = item["response"]
             human_score = item["human_score"]
+
             llm_response = self._get_judge_llm_resp(instruction, response)
             feedback, llm_score = self._parse_feedback_and_score(llm_response)
             results.append([instruction, response, human_score, llm_score, feedback, llm_response])
@@ -128,8 +131,30 @@ class AbsoluteLLMJudge:
             response2 = item["response2"]
             human_score = item["human_score"]
 
-            llm_response1 = self._get_judge_llm_resp(instruction, response1)
-            llm_response2 = self._get_judge_llm_resp(instruction, response2)
+            llm_response1 = None
+            llm_response2 = None
+
+            # this will be triggered only if 'index' is a key in the items, so should not be a problem for other datasets
+            if 'index' in item and item['index'] in self.processed_indices.keys():
+                if item['model1'] in self.processed_indices[item['index']]:
+                    llm_response1 = self.processed_indices[item['index']][item['model1']]
+                if item['model2'] in self.processed_indices[item['index']]:
+                    llm_response2 = self.processed_indices[item['index']][item['model2']]
+            if llm_response1 is None:
+                llm_response1 = self._get_judge_llm_resp(instruction, response1)
+                #save the response
+                if item['index'] not in self.processed_indices:
+                    self.processed_indices[item['index']] = {}
+                self.processed_indices[item['index']][item['model1']] = llm_response1
+
+            if llm_response2 is None:
+                llm_response2 = self._get_judge_llm_resp(instruction, response2)
+                #save the response 
+                if item['index'] not in self.processed_indices:
+                    self.processed_indices[item['index']] = {}
+                self.processed_indices[item['index']][item['model2']] = llm_response2
+
+            # llm_response2 = self._get_judge_llm_resp(instruction, response2)
 
             critique1, score1  = self._parse_feedback_and_score(llm_response1)
             critique2, score2 = self._parse_feedback_and_score(llm_response2)
