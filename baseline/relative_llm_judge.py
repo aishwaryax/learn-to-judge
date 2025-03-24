@@ -25,7 +25,7 @@ class RelativeLLMJudge:
         safe_response1 = response1.replace("{", "{{").replace("}", "}}")
         safe_response2 = response2.replace("{", "{{").replace("}", "}}")
 
-        RELATIVE_PROMPT_WO_REF = """###Task Description:
+        RELATIVE_PROMPT_WO_REF = f"""###Task Description:
         An instruction (might include an Input inside it), two responses to evaluate (denoted as Response A and Response B), and an evaluation criteria are given.
         1. Write a detailed feedback that assess the quality of the two responses strictly based on the given evaluation criteria, not evaluating in general.
         2. Make comparisons between Response A and Response B. Instead of examining Response A and Response B separately, go straight to the point and mention about the commonalities and differences between them.
@@ -34,19 +34,19 @@ class RelativeLLMJudge:
         5. Please do not generate any other opening, closing, and explanations.
 
         ###Instruction:
-        {instruction}
+        {safe_instruction}
 
         ###Response A:
-        {response1}
+        {safe_response1}
 
         ###Response B:
-        {response2}
+        {safe_response2}
 
         ###Score Rubric:
-        {rubrics}
+        {self.rubrics}
 
         ###Feedback: """
-        user_content = REL_SYSTEM_PROMPT + "\n\n" + RELATIVE_PROMPT_WO_REF.format(instruction=safe_instruction, response1=safe_response1, response2=safe_response2,rubrics=self.rubrics)
+        user_content = REL_SYSTEM_PROMPT + "\n\n" + RELATIVE_PROMPT_WO_REF
         sampling_params = SamplingParams(max_tokens=1000, temperature=0.1, top_p=0.9, top_k=50)
         outputs = self.llm.generate([user_content], sampling_params)
         return outputs[0].outputs[0].text.strip()
@@ -59,7 +59,10 @@ class RelativeLLMJudge:
         else:
             score = None
             feedback = text.strip()
-        score = 0 if score == 'A' else 1
+        if score in ['A', 'B']:
+            score = 0 if score == 'A' else 1
+        else:
+            score = None
         return feedback, score
     
     def _get_processed_lines(self):
@@ -94,6 +97,8 @@ class RelativeLLMJudge:
             human_score = item["human_score"]
             llm_response = self._get_judge_llm_resp(instruction, response1, response2)
             feedback, score = self._parse_feedback_and_score(llm_response)
+            if score is None:
+                continue
             results.append([instruction, response1, response2, human_score, feedback, score, llm_response])
             if len(results) >= batch_size:
                 with open(self.output_file, mode='a+', newline='') as file:        

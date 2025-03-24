@@ -16,14 +16,10 @@ dataset = load_dataset("openai/summarize_from_feedback", "axis")
 
 rubrics = """
 [How good is the summary overall at representing the post? If it's hard to find ways to make the summary better, give the summary a high score. If there are lots of different ways the summary can be made better, give the summary a low score.
-These are just reference rubrics, and please interpolate the score with respect to these rubrics.]
-Score of 1: The summary is extremely vague or irrelevant, failing to capture key aspects of the original text. Important information is missing, or the summary is disconnected from the main content.
-Score of 2: The summary includes some relevant points but omits crucial details or misrepresents the central themes of the original text. It may be overly generalized or inaccurate.
-Score of 3: The summary captures the main idea but lacks depth or omits significant context. Some details may be misrepresented or simplified, leading to a partial understanding of the original text.
-Score of 4: The summary is mostly accurate, capturing the main points and themes with only minor omissions or inaccuracies. It reflects a general understanding of the text but may lack clarity or completeness in certain areas.
-Score of 5: The summary is clear, accurate, and captures the key elements of the text. It includes the central ideas, though some minor details may be left out. Overall, it demonstrates a good understanding of the content.
-Score of 6: The summary is detailed, well-organized, and accurately reflects the main points and supporting details of the text. It may omit very minor information but conveys the essence of the content effectively.
-Score of 7: The summary is comprehensive and insightful, capturing all major ideas and details in a concise and coherent manner. It accurately reflects the structure and tone of the original text while maintaining clarity and precision.
+These are just reference rubrics, and please interpolate the score with respect to these rubrics.
+Score of 1: The summary is terrible.
+Score of 4: The summary is an okay representation of the post, but could be significantly improved.
+Score of 7: The summary is an excellent representation of the post.
 """
 
 instruction_text = "Read the given text and provide a summary.\nText: "

@@ -45,8 +45,7 @@ class AbsoluteLLMJudge:
 
         ###Feedback: """
 
-        ABSOLUTE_PROMPT_WO_REF = ABSOLUTE_PROMPT_WO_REF.replace("{", "{{").replace("}", "}}")
-        user_content = ABS_SYSTEM_PROMPT + "\n\n" + ABSOLUTE_PROMPT_WO_REF.format(instruction=safe_instruction, response=safe_response, rubrics=self.rubrics)
+        user_content = ABS_SYSTEM_PROMPT + "\n\n" + ABSOLUTE_PROMPT_WO_REF
         sampling_params = SamplingParams(max_tokens=1000, temperature=0.1, top_p=0.9, top_k=50)
         outputs = self.llm.generate([user_content], sampling_params)
         return outputs[0].outputs[0].text.strip()
