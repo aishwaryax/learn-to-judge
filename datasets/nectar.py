@@ -66,7 +66,7 @@ else:
         dataset=nectar_transformed_dataset, 
         rubrics=rubrics, 
         output_file=args.output_file, 
-        repo_name=args.model_repo
+        repo_name=args.model_repo,
+        processed_indices={}
     )
-    relative_llm_judge.generate_inference_file()
-    
+    relative_llm_judge.generate_inference_file()        
