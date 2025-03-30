@@ -49,7 +49,7 @@ class RelativeLLMJudge:
         user_content = REL_SYSTEM_PROMPT + "\n\n" + RELATIVE_PROMPT_WO_REF
         sampling_params = SamplingParams(max_tokens=1000, temperature=0.1, top_p=0.9, top_k=50)
         outputs = self.llm.generate([user_content], sampling_params)
-        return outputs[0].outputs[0].text.strip()
+        return outputs[0].outputs[0].text.strip(), user_content
 
     def _parse_feedback_and_score(self, text):
         result_match = re.search(r"\[RESULT\]\s*([AB])", text)
@@ -84,7 +84,7 @@ class RelativeLLMJudge:
         with open(self.output_file, mode='a+', newline='') as file:
             writer = csv.writer(file)
             if os.stat(self.output_file).st_size == 0:
-                writer.writerow(["instruction", "response1", "response2", "human_score", "llm_critique", "llm_score", "llm_response"])
+                writer.writerow(["instruction", "response1", "response2", "llm_prompt", "human_score", "llm_critique", "llm_score", "llm_response"])
 
         for idx, item in enumerate(self.dataset):
             if idx < start_idx:
@@ -95,11 +95,11 @@ class RelativeLLMJudge:
             response1 = item["response1"]
             response2 = item["response2"]
             human_score = item["human_score"]
-            llm_response = self._get_judge_llm_resp(instruction, response1, response2)
+            llm_response, llm_prompt = self._get_judge_llm_resp(instruction, response1, response2)
             feedback, score = self._parse_feedback_and_score(llm_response)
             if score is None:
                 continue
-            results.append([instruction, response1, response2, human_score, feedback, score, llm_response])
+            results.append([instruction, response1, response2, llm_prompt, human_score, feedback, score, llm_response])
             if len(results) >= batch_size:
                 with open(self.output_file, mode='a+', newline='') as file:        
                     writer = csv.writer(file)
