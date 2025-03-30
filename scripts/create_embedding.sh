@@ -22,9 +22,11 @@ model_repo="$1"
 input_file="$2"
 output_prefix="$3"
 batch_size="$4"
+dataset_type="$5"
 
 python utils/create_embedding.py \
       --model_repo "$model_repo" \
       --input_file "$input_file" \
       --output_prefix "$output_prefix" \
-      --batch_size "$batch_size"
+      --batch_size "$batch_size" \
+      --dataset_type "$dataset_type"
