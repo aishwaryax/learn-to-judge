@@ -106,7 +106,7 @@ if __name__ == "__main__":
         ))
     df["target_probability2"], df["self_consistency_score2"] = zip(*df.apply(
             lambda row: compute_scores(
-                row["llm_prompt"], row["llm_response"], targets, tokenizer, model
+                row["llm_prompt2"], row["llm_response2"], targets, tokenizer, model
             ), axis=1
         ))
     np.save(f"{args.output_prefix}_critique1.npy", embeddings_critique1)
