@@ -8,11 +8,12 @@ from transformers import AutoTokenizer
 from pathlib import Path
 
 class RelativeLLMJudge:
-    def __init__(self, dataset, rubrics, output_file, repo_name):
+    def __init__(self, dataset, rubrics, output_file, repo_name,processed_indices={}):
         self.dataset = dataset
         self.rubrics = rubrics
         self.output_file = output_file
         self._load_model_tokenizer(repo_name)
+        self.processed_indices = processed_indices
         
     def _load_model_tokenizer(self, repo_name):
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -24,7 +25,7 @@ class RelativeLLMJudge:
         safe_instruction = instruction.replace("{", "{{").replace("}", "}}")
         safe_response1 = response1.replace("{", "{{").replace("}", "}}")
         safe_response2 = response2.replace("{", "{{").replace("}", "}}")
-
+        
         RELATIVE_PROMPT_WO_REF = """###Task Description:
         An instruction (might include an Input inside it), two responses to evaluate (denoted as Response A and Response B), and an evaluation criteria are given.
         1. Write a detailed feedback that assess the quality of the two responses strictly based on the given evaluation criteria, not evaluating in general.
@@ -46,6 +47,7 @@ class RelativeLLMJudge:
         {rubrics}
 
         ###Feedback: """
+        RELATIVE_PROMPT_WO_REF = RELATIVE_PROMPT_WO_REF.replace("{", "{{").replace("}", "}}")
         user_content = REL_SYSTEM_PROMPT + "\n\n" + RELATIVE_PROMPT_WO_REF.format(instruction=safe_instruction, response1=safe_response1, response2=safe_response2,rubrics=self.rubrics)
         sampling_params = SamplingParams(max_tokens=1000, temperature=0.1, top_p=0.9, top_k=50)
         outputs = self.llm.generate([user_content], sampling_params)
