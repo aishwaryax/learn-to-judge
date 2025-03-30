@@ -34,7 +34,7 @@ def get_embeddings(texts, tokenizer, model, batch_size=8):
     return np.vstack(embeddings)
 
 
-def compute_scores(question, response, targets, tokenizer, model, top_k=100):
+def compute_scores(question, response, targets, tokenizer, model, top_k=100, dataset_type="absolute"):
     input_text = f"{question}{response}"
     input_tokens = tokenizer(input_text, return_tensors="pt").to(device)
     input_ids = input_tokens["input_ids"]
@@ -64,6 +64,9 @@ def compute_scores(question, response, targets, tokenizer, model, top_k=100):
     
     target_probabilities = {}
 
+    if dataset_type == "relative":
+        targets = ["A" if t == "A" else "B" for t in targets]
+
     for target in targets:
         target_token_id = tokenizer(target, add_special_tokens=False)["input_ids"][-1]
         target_token_index = (response_token_ids == target_token_id).nonzero(as_tuple=True)
@@ -76,6 +79,12 @@ def compute_scores(question, response, targets, tokenizer, model, top_k=100):
         else:
             target_probabilities[target] = 0.0
 
+    total_prob = sum(target_probabilities.values())
+    if total_prob > 0:
+        target_probabilities = {k: v / total_prob for k, v in target_probabilities.items()}
+    else:
+        target_probabilities = {k: 0.0 for k in target_probabilities}
+
     return target_probabilities, self_consistency_score
 
 
@@ -85,6 +94,7 @@ if __name__ == "__main__":
     parser.add_argument("--input_file", type=str, required=True, help="Input CSV file.")
     parser.add_argument("--output_prefix", type=str, required=True, help="Prefix for output files.")
     parser.add_argument("--batch_size", type=int, default=8, help="Batch size for processing inputs.")
+    parser.add_argument("--dataset_type", type=str, choices=["absolute", "relative"], default="absolute", help="Type of dataset: 'absolute' or 'relative'.")
     args = parser.parse_args()
 
     input_dir = os.path.dirname(os.path.abspath(args.input_file))
@@ -104,14 +114,13 @@ if __name__ == "__main__":
 
     df["target_probability"], df["self_consistency_score"] = zip(*df.apply(
         lambda row: compute_scores(
-            row["llm_prompt"], row["llm_response"], targets, tokenizer, model
+            row["llm_prompt"], row["llm_response"], targets, tokenizer, model, dataset_type=args.dataset_type
         ), axis=1
     ))
 
     df["embedding_index_critique"] = np.arange(len(df))
-    np.save(f"{output_prefix}_critique.npy", embeddings_critique)
+    np.save(f"{output_prefix}_critique_embeddings.npy", embeddings_critique)
     df.to_csv(f"{output_prefix}_with_scores_embeddings.csv", index=False)
 
     print(f"Embeddings saved to {output_prefix}_critique_embeddings.npy")
-    print(f"Logits saved to {output_prefix}_response_logits.npy")
-    print(f"Updated CSV with scores saved to {output_prefix}_scores.csv")
+    print(f"Updated CSV with scores saved to {output_prefix}_with_scores_embeddings.csv")
