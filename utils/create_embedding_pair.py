@@ -86,19 +86,22 @@ if __name__ == "__main__":
     input_dir = os.path.dirname(os.path.abspath(args.input_file))
     output_prefix = os.path.join(input_dir, args.output_prefix)
     tokenizer, model = load_model(args.model_repo)
-    
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.unk_token if tokenizer.unk_token else tokenizer.eos_token
+
     df = pd.read_csv(args.input_file)
     df = df[
         df["llm_critique1"].notna() & (df["llm_critique1"].str.strip() != "") &
         df["llm_critique2"].notna() & (df["llm_critique2"].str.strip() != "") &
         df["llm_response1"].notna() & (df["llm_response1"].str.strip() != "") &
-        df["llm_response2"].notna() & (df["llm_response2"].str.strip() != "")
-        pd.to_numeric(df["llm_score"], errors='coerce').notna()
+        df["llm_response2"].notna() & (df["llm_response2"].str.strip() != "") &
+        pd.to_numeric(df["llm_score1"], errors='coerce').astype('Int64').notna() &
+        pd.to_numeric(df["llm_score2"], errors='coerce').astype('Int64').notna()
     ]
 
     embeddings_critique1 = get_embeddings(df["llm_critique1"].tolist(), tokenizer, model, args.batch_size)
     embeddings_critique2 = get_embeddings(df["llm_critique2"].tolist(), tokenizer, model, args.batch_size)
-
+    targets = list(sorted(set(df['llm_score1'].unique().astype(int).astype(str)).union(df['llm_score2'].unique().astype(int).astype(str))))
     df["target_probability1"], df["self_consistency_score1"] = zip(*df.apply(
             lambda row: compute_scores(
                 row["llm_prompt1"], row["llm_response1"], targets, tokenizer, model

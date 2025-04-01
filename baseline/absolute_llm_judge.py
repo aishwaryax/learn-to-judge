@@ -48,7 +48,7 @@ class AbsoluteLLMJudge:
         user_content = ABS_SYSTEM_PROMPT + "\n\n" + ABSOLUTE_PROMPT_WO_REF
         sampling_params = SamplingParams(max_tokens=1000, temperature=0.1, top_p=0.9)
         outputs = self.llm.generate([user_content], sampling_params)
-        return outputs[0].outputs[0].text.strip()
+        return outputs[0].outputs[0].text.strip(), user_content
 
 
     def _parse_feedback_and_score(self, text):
@@ -83,7 +83,7 @@ class AbsoluteLLMJudge:
         with open(self.output_file, mode='a+', newline='') as file:
             writer = csv.writer(file)
             if os.stat(self.output_file).st_size == 0:
-                writer.writerow(["instruction", "response", "human_score", "llm_score", "llm_critique", "llm_response"])
+                writer.writerow(["instruction", "response", "llm_prompt", "human_score", "llm_score", "llm_critique", "llm_response"])
         
         for idx, item in enumerate(self.dataset):
             if idx < start_idx:
@@ -94,9 +94,9 @@ class AbsoluteLLMJudge:
             response = item["response"]
             human_score = item["human_score"]
 
-            llm_response = self._get_judge_llm_resp(instruction, response)
+            llm_response, llm_prompt = self._get_judge_llm_resp(instruction, response)
             feedback, llm_score = self._parse_feedback_and_score(llm_response)
-            results.append([instruction, response, human_score, llm_score, feedback, llm_response])
+            results.append([instruction, response, llm_prompt, human_score, llm_score, feedback, llm_response])
             if len(results) >= batch_size:
                 with open(self.output_file, mode='a+', newline='') as file:        
                     writer = csv.writer(file)
@@ -118,7 +118,7 @@ class AbsoluteLLMJudge:
         with open(self.output_file, mode='a+', newline='') as file:
             writer = csv.writer(file)
             if os.stat(self.output_file).st_size == 0:
-                writer.writerow(["instruction", "response1", "response2", "human_score", "llm_critique1", "llm_critique2", "llm_score1", "llm_score2", "llm_response1", "llm_response2"])
+                writer.writerow(["instruction", "response1", "response2", "llm_prompt1", "llm_prompt2", "human_score", "llm_critique1", "llm_critique2", "llm_score1", "llm_score2", "llm_response1", "llm_response2"])
 
         for idx, item in enumerate(self.dataset):
             if idx < start_idx:
@@ -136,18 +136,18 @@ class AbsoluteLLMJudge:
             # this will be triggered only if 'index' is a key in the items, so should not be a problem for other datasets
             if 'index' in item and item['index'] in self.processed_indices.keys():
                 if item['model1'] in self.processed_indices[item['index']]:
-                    llm_response1 = self.processed_indices[item['index']][item['model1']]
+                    llm_response1, llm_prompt1 = self.processed_indices[item['index']][item['model1']]
                 if item['model2'] in self.processed_indices[item['index']]:
-                    llm_response2 = self.processed_indices[item['index']][item['model2']]
+                    llm_response2, llm_prompt2 = self.processed_indices[item['index']][item['model2']]
             if llm_response1 is None:
-                llm_response1 = self._get_judge_llm_resp(instruction, response1)
+                llm_response1, llm_prompt1 = self._get_judge_llm_resp(instruction, response1)
                 #save the response
                 if item['index'] not in self.processed_indices:
                     self.processed_indices[item['index']] = {}
                 self.processed_indices[item['index']][item['model1']] = llm_response1
 
             if llm_response2 is None:
-                llm_response2 = self._get_judge_llm_resp(instruction, response2)
+                llm_response2, llm_prompt2 = self._get_judge_llm_resp(instruction, response2)
                 #save the response 
                 if item['index'] not in self.processed_indices:
                     self.processed_indices[item['index']] = {}
@@ -158,7 +158,7 @@ class AbsoluteLLMJudge:
             critique1, score1  = self._parse_feedback_and_score(llm_response1)
             critique2, score2 = self._parse_feedback_and_score(llm_response2)
 
-            results.append([instruction, response1, response2, human_score, critique1, critique2, score1, score2, llm_response1, llm_response2])
+            results.append([instruction, response1, response2, llm_prompt1, llm_prompt2, human_score, critique1, critique2, score1, score2, llm_response1, llm_response2])
             if len(results) >= batch_size:
                 with open(self.output_file, mode='a+', newline='') as file:        
                     writer = csv.writer(file)
