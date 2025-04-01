@@ -48,7 +48,7 @@ class RelativeLLMJudge:
 
         ###Feedback: """
         user_content = REL_SYSTEM_PROMPT + "\n\n" + RELATIVE_PROMPT_WO_REF
-        sampling_params = SamplingParams(max_tokens=1000, temperature=0.1, top_p=0.9, top_k=50)
+        sampling_params = SamplingParams(max_tokens=1000, temperature=0.1, top_p=0.9)
         outputs = self.llm.generate([user_content], sampling_params)
         return outputs[0].outputs[0].text.strip(), user_content
 
