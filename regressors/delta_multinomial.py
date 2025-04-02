@@ -67,10 +67,10 @@ class DeltaMultinomial:
             if self.target_keys is None:
                 self.target_keys = sorted(row["target_probability"].keys())
             tp = row["target_probability"]
-            pi0 = np.zeros(len(self.label_encoder.classes_))  # Initialize with zeros
+            pi0 = np.zeros(len(self.label_encoder.classes_))
             for key, value in row["target_probability"].items():
-                index = int(self.label_encoder.inverse_transform([int(value)])[0])  # Convert key to index
-                pi0[index] = row["self_consistency_score"] * value  # Assign probability
+                index = int(self.label_encoder.inverse_transform([int(value)])[0])
+                pi0[index] = row["self_consistency_score"] * value
             pi0 = np.clip(pi0, 1e-8, 1.0)
             bias_list.append(np.log(pi0))
         return np.stack(bias_list, axis=0)
@@ -160,9 +160,10 @@ class DeltaMultinomial:
         r2 = r2_score(y_test_numeric, y_pred_numeric)
         min_pred, max_pred = np.min(y_pred_numeric), np.max(y_pred_numeric)
         accuracy = accuracy_score(y_test, y_pred)
-        precision, recall, f1, support = precision_recall_fscore_support(
+        precision, recall, f1, _ = precision_recall_fscore_support(
             y_test, y_pred, average="weighted", zero_division=1
         )
+
         return {
             "MSE": mse,
             "MAE": mae,
@@ -172,8 +173,7 @@ class DeltaMultinomial:
             "Accuracy": accuracy,
             "Precision": precision,
             "Recall": recall,
-            "F1 Score": f1,
-            "Support": support
+            "F1 Score": f1
         }
         
     def experiment(self):
@@ -181,7 +181,7 @@ class DeltaMultinomial:
         X_train_full = np.vstack([X_train, X_val])
         y_train_full = np.hstack([y_train, y_val])
         bias_train_full = np.vstack([bias_train, bias_val])
-        C_values = [10**i for i in np.arange(-6, 0, 6, dtype=float)]
+        C_values = np.logspace(-6, 6, num=10)
         self.tune_hyperparameters(X_train_full, X_val, y_train_full, y_val, bias_train_full, bias_val, C_values)
         self.train(X_train_full, y_train_full, bias_train_full)
         return self.eval(X_test, y_test, bias_test)

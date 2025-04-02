@@ -43,7 +43,7 @@ class LLMRegressor:
         y_pred_rounded = np.round(np.clip(y_pred, min_pred, max_pred))
 
         accuracy = accuracy_score(y_test_rounded, y_pred_rounded)
-        precision, recall, f1, support = precision_recall_fscore_support(y_test_rounded, y_pred_rounded, average='weighted', zero_division=1)
+        precision, recall, f1, _ = precision_recall_fscore_support(y_test_rounded, y_pred_rounded, average='weighted', zero_division=1)
 
         return {
             "MSE": mse,
@@ -54,8 +54,7 @@ class LLMRegressor:
             "Accuracy": accuracy,
             "Precision": precision,
             "Recall": recall,
-            "F1 Score": f1,
-            "Support": support
+            "F1 Score": f1
         }
         
     def experiment(self):

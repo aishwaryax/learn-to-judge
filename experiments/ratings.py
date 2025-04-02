@@ -6,7 +6,7 @@ from regressors.delta_multinomial import DeltaMultinomial
 from regressors.ls import LS
 from regressors.delta_ls import DeltaLS
 from pathlib import Path
-from regressors.llm_regressor import LLMRegressor
+from regressors.llm import LLMRegressor
 
 def save_results(results, model_name, experiment_folder):
     experiment_folder = Path(experiment_folder)
@@ -23,11 +23,11 @@ def save_results(results, model_name, experiment_folder):
 
 def main():
     parser = argparse.ArgumentParser(description="Run Ratings Dataset experiment.")
-    parser.add_argument("train_path", type=str, help="Path to the training data CSV file.")
-    parser.add_argument("test_path", type=str, help="Path to the testing data CSV file.")
-    parser.add_argument("train_emb_path", type=str, help="Path to the training embeddings .npy file.")
-    parser.add_argument("test_emb_path", type=str, help="Path to the testing embeddings .npy file.")
-    parser.add_argument("experiment_folder", type=str, help="Folder to save experiment results.")
+    parser.add_argument("--train_path", type=str, help="Path to the training data CSV file.")
+    parser.add_argument("--test_path", type=str, help="Path to the testing data CSV file.")
+    parser.add_argument("--train_emb_path", type=str, help="Path to the training embeddings .npy file.")
+    parser.add_argument("--test_emb_path", type=str, help="Path to the testing embeddings .npy file.")
+    parser.add_argument("--experiment_folder", type=str, help="Folder to save experiment results.")
     args = parser.parse_args()
     
     models = {
