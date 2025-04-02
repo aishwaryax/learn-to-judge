@@ -51,7 +51,7 @@ class BTL2:
             model.fit(X_train, y_train)
             y_pred = model.predict(X_val)
             accuracy = accuracy_score(y_val, y_pred)
-
+            print(f"Accuracy: {accuracy} @ C: {C}")
             if accuracy > best_accuracy:
                 best_accuracy = accuracy
                 self.best_C = C

@@ -41,7 +41,7 @@ def log_likelihood_grad(theta_flat, X, y, log_ratio, lambda_l2=0.0, lambda_l1=0.
     y_onehot = np.zeros_like(probs)
     y_onehot[np.arange(n), y] = 1
     
-    grad = X.T.dot(probs - y_onehot)    
+    grad = X.T.dot(probs - y_onehot)
     if lambda_l2 > 0:
         grad += 2 * lambda_l2 * theta    
     if lambda_l1 > 0:
@@ -70,9 +70,9 @@ class DeltaMultinomial:
             pi0 = np.zeros(len(self.label_encoder.classes_))
             for key, value in row["target_probability"].items():
                 index = int(self.label_encoder.inverse_transform([int(value)])[0])
-                pi0[index] = row["self_consistency_score"] * value
-            pi0 = np.clip(pi0, 1e-8, 1.0)
-            bias_list.append(np.log(pi0))
+                pi0[index] = value
+            pi0 = np.clip(pi0, 1e-8, 1.0-1e-8)
+            bias_list.append(np.log(pi0/(1-pi0)))
         return np.stack(bias_list, axis=0)
 
     def preprocess(self):
@@ -113,7 +113,7 @@ class DeltaMultinomial:
                 preds = self._predict_internal(X_val, bias_val, theta_candidate)
                 y_pred = np.argmax(preds, axis=1)
                 accuracy = accuracy_score(y_val, y_pred)
-                
+                print(f"Accuracy: {accuracy} @ l2: {l2}, l1: {l1}")
                 if accuracy > best_accuracy:
                     best_accuracy = accuracy
                     best_l2 = l2

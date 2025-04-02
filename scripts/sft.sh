@@ -20,7 +20,8 @@ fi
 model_repo="$1"
 dataset_path="$2"
 save_path="$3"
+epochs="$4"
 
 # Run the Python script
 export PYTHONPATH=$(pwd):$PYTHONPATH
-python train/sft.py --model_repo "$model_repo" --dataset_path "$dataset_path" --save_path "$save_path"
+python train/sft.py --model_repo "$model_repo" --dataset_path "$dataset_path" --save_path "$save_path" --epochs "$4"

@@ -135,7 +135,7 @@ class DeltaBTL2:
                 self.train(X_train, y_train, log_ratio_train, lambda_l2, lambda_l1)
                 predictions = self.predict(X_val, log_ratio_val)[0]
                 accuracy = accuracy_score(y_val, predictions)
-                
+                print(f"Accuracy: {accuracy} @ l2: {lambda_l2}, l1: {lambda_l1}")
                 if accuracy > best_accuracy:
                     best_accuracy = accuracy
                     best_lambda_l2 = lambda_l2

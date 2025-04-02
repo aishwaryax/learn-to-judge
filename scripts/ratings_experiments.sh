@@ -23,4 +23,4 @@ test_emb_path="$4"
 experiment_folder="$5"
 
 export PYTHONPATH=$(pwd):$PYTHONPATH
-python experiments/ratings.py --train_path $train_path --train_path $test_path --train_emb_path $train_emb_path --test_emb_path $test_emb_path --experiment_folder $experiment_folder
+python experiments/ratings.py --train_path $train_path --test_path $test_path --train_emb_path $train_emb_path --test_emb_path $test_emb_path --experiment_folder $experiment_folder
