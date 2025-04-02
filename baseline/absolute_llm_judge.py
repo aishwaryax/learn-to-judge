@@ -136,6 +136,7 @@ class AbsoluteLLMJudge:
             # this will be triggered only if 'index' is a key in the items, so should not be a problem for other datasets
             if 'index' in item and item['index'] in self.processed_indices.keys():
                 if item['model1'] in self.processed_indices[item['index']]:
+                    # print(self.processed_indices[item['index']][item['model1']])
                     llm_response1, llm_prompt1 = self.processed_indices[item['index']][item['model1']]
                 if item['model2'] in self.processed_indices[item['index']]:
                     llm_response2, llm_prompt2 = self.processed_indices[item['index']][item['model2']]
@@ -144,14 +145,14 @@ class AbsoluteLLMJudge:
                 #save the response
                 if item['index'] not in self.processed_indices:
                     self.processed_indices[item['index']] = {}
-                self.processed_indices[item['index']][item['model1']] = llm_response1
+                self.processed_indices[item['index']][item['model1']] = llm_response1, llm_prompt1
 
             if llm_response2 is None:
                 llm_response2, llm_prompt2 = self._get_judge_llm_resp(instruction, response2)
                 #save the response 
                 if item['index'] not in self.processed_indices:
                     self.processed_indices[item['index']] = {}
-                self.processed_indices[item['index']][item['model2']] = llm_response2
+                self.processed_indices[item['index']][item['model2']] = llm_response2, llm_prompt2
 
             # llm_response2 = self._get_judge_llm_resp(instruction, response2)
 

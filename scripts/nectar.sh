@@ -29,4 +29,6 @@ baseline_type="$4"
 export PYTHONPATH=$(pwd):$PYTHONPATH
 python datasets/nectar.py --dataset_fold $dataset_fold --output_file $output_file --model_repo $model_repo --baseline_type $baseline_type
 
-# sbatch scripts/nectar.sh train /project/pi_wenlongzhao_umass_edu/1/jkarnuthala/experiment_results/prometheusv2/nectar/asbolute_test.csv /datasets/ai/llama3/hub/models--meta-llama--Meta-Llama-3.1-70B-Instruct/snapshots/33101ce6ccc08fa6249c10a543ebfcac65173393 absolute
+# bash scripts/nectar.sh test /project/pi_wenlongzhao_umass_edu/1/jkarnuthala/experiment_results/prometheusv2/nectar/asbolute_test.csv /datasets/ai/llama3/hub/models--meta-llama--Meta-Llama-3.1-70B-Instruct/snapshots/33101ce6ccc08fa6249c10a543ebfcac65173393 absolute
+
+# bash scripts/nectar.sh train /project/pi_wenlongzhao_umass_edu/1/jkarnuthala/experiment_results/prometheusv2/nectar/absolute_prometheus_test.csv /project/pi_wenlongzhao_umass_edu/1/models/models--prometheus-eval--prometheus-7b-v2.0/snapshots/66ffb1fc20beebfb60a3964a957d9011723116c5 absolute
