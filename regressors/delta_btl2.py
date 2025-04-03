@@ -147,7 +147,7 @@ class DeltaBTL2:
 
     def experiment(self):
         X_train, y_train, X_val, y_val, X_bias_train, X_bias_val, X_test, y_test, X_bias_test = self.preprocess()        
-        lambda_values = np.logspace(-6, 6, num=10)
+        lambda_values = np.logspace(-3, 3, num=6)
         self.tune_hyperparameters(X_train, y_train, X_val, y_val, X_bias_train, X_bias_val, lambda_values)        
         X_train_full = np.vstack([X_train, X_val])
         y_train_full = np.hstack([y_train, y_val])

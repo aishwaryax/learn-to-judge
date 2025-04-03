@@ -51,7 +51,7 @@ class Multinomial:
             model.fit(X_train, y_train)
             y_pred = model.predict(X_val)
             accuracy = accuracy_score(y_val, y_pred)
-
+            print(f"C: {C}, accuracy: {accuracy}")
             if accuracy > best_accuracy:
                 best_accuracy = accuracy
                 self.best_C = C
@@ -60,7 +60,7 @@ class Multinomial:
         print(f"Best Regularization (C): {self.best_C}")
 
     def train(self, X_train, y_train):
-        self.model = LogisticRegression(C=self.best_C, multi_class="multinomial", solver="lbfgs", max_iter=1000)
+        self.model = LogisticRegression(C=self.best_C, multi_class="multinomial", solver="lbfgs", max_iter=2000)
         self.model.fit(X_train, y_train)
 
     def predict(self, X_test):
@@ -97,7 +97,7 @@ class Multinomial:
         
     def experiment(self):
         X_train, X_val, y_train, y_val, X_test, y_test = self.preprocess()
-        C_values = [10**i for i in np.arange(-6, 6, 1, dtype=float)]
+        C_values = [10**i for i in np.arange(-3, 4, 1, dtype=float)]
         self.tune_hyperparameters(X_train, X_val, y_train, y_val, C_values)
         X_full_train = np.vstack((X_train, X_val))
         y_full_train = np.hstack((y_train, y_val))

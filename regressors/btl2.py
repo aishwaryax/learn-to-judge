@@ -60,7 +60,7 @@ class BTL2:
         print(f"Best Regularization (C): {self.best_C}")
 
     def train(self, X_train, y_train):
-        self.model = LogisticRegression(C=self.best_C, penalty="l2", solver="liblinear", max_iter=3000, warm_start=True)
+        self.model = LogisticRegression(C=self.best_C, solver="lbfgs", max_iter=2000)
         self.model.fit(X_train, y_train)
 
     def predict(self, X_test):
@@ -94,7 +94,7 @@ class BTL2:
         
     def experiment(self):
         X_train, X_val, y_train, y_val, X_test, y_test = self.preprocess()
-        C_values = [10**i for i in np.arange(-6, 6, 10, dtype=float)]
+        C_values = [10**i for i in np.arange(-4, 4, 1, dtype=float)]
         self.tune_hyperparameters(X_train, X_val, y_train, y_val, C_values)
         X_full_train = np.vstack((X_train, X_val))
         y_full_train = np.hstack((y_train, y_val))

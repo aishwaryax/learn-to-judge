@@ -90,7 +90,7 @@ class DeltaLS:
 
     def experiment(self):
         X_train, X_val, y_train, y_val, X_test, X_test_bias, y_test = self.preprocess()
-        alphas = np.logspace(-6, 6, 10)
+        alphas = np.logspace(-3, 3, num=6)
         self.tune_hyperparameters(X_train, X_val, y_train, y_val, alphas)
         X_full_train = np.vstack((X_train, X_val))
         y_full_train = np.hstack((y_train, y_val))

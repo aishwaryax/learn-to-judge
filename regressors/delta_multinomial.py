@@ -181,7 +181,7 @@ class DeltaMultinomial:
         X_train_full = np.vstack([X_train, X_val])
         y_train_full = np.hstack([y_train, y_val])
         bias_train_full = np.vstack([bias_train, bias_val])
-        C_values = np.logspace(-6, 6, num=10)
+        C_values = np.logspace(-3, 3, num=6)
         self.tune_hyperparameters(X_train_full, X_val, y_train_full, y_val, bias_train_full, bias_val, C_values)
         self.train(X_train_full, y_train_full, bias_train_full)
         return self.eval(X_test, y_test, bias_test)
