@@ -63,16 +63,16 @@ class DeltaMultinomial:
 
     def compute_bias(self, df):
         bias_list = []
+        label_classes = self.label_encoder.classes_
+        indices = self.label_encoder.inverse_transform(np.arange(len(label_classes)))
         for _, row in df.iterrows():
-            if self.target_keys is None:
-                self.target_keys = sorted(row["target_probability"].keys())
             tp = row["target_probability"]
-            pi0 = np.zeros(len(self.label_encoder.classes_))
-            for key, value in row["target_probability"].items():
-                index = int(self.label_encoder.inverse_transform([int(value)])[0])
-                pi0[index] = value
-            pi0 = np.clip(pi0, 1e-8, 1.0-1e-8)
-            bias_list.append(np.log(pi0/(1-pi0)))
+            pi0 = np.zeros(len(label_classes))
+            for idx, key in enumerate(indices):
+                if key in tp:
+                    pi0[idx] = tp[key]
+            pi0 = np.clip(pi0, 1e-8, 1.0 - 1e-8)
+            bias_list.append(np.log(pi0))
         return np.stack(bias_list, axis=0)
 
     def preprocess(self):
@@ -88,6 +88,7 @@ class DeltaMultinomial:
             df["target_probability"] = df["target_probability"].apply(ast.literal_eval)
 
         all_labels = np.concatenate([train_df["human_score"].values, test_df["human_score"].values])
+        self.targets = sorted(df['llm_score'].unique().astype(int).astype(str))
         self.label_encoder.fit(all_labels)
 
         X = train_embeddings[train_df["embedding_index_critique"].values]
