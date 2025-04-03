@@ -64,9 +64,6 @@ def compute_scores(question, response, targets, tokenizer, model, top_k=100, dat
     
     target_probabilities = {}
 
-    if dataset_type == "relative":
-        targets = ["A", "B"]
-
     for index, target in enumerate(targets):
         target_token_id = tokenizer(target, add_special_tokens=False)["input_ids"][-1]
         target_token_index = (response_token_ids == target_token_id).nonzero(as_tuple=True)
@@ -75,9 +72,9 @@ def compute_scores(question, response, targets, tokenizer, model, top_k=100, dat
             target_index = target_token_index[0][-1].item()
             target_logit = response_logits[target_index, :]
             target_prob = torch.nn.functional.softmax(target_logit, dim=-1)[target_token_id].item()
-            target_probabilities[index] = target_prob
+            target_probabilities[target if dataset_type == "absolute" else index] = target_prob
         else:
-            target_probabilities[index] = 0.0
+            target_probabilities[target if dataset_type == "absolute" else index] = 0.0
 
     total_prob = sum(target_probabilities.values())
     if total_prob > 0:
@@ -110,8 +107,13 @@ if __name__ == "__main__":
         df["llm_critique"].notna() & 
         pd.to_numeric(df["llm_score"], errors='coerce').notna()
     ]
-    targets = sorted(df['llm_score'].unique().astype(int).astype(str))
+    targets = None
     
+    if dataset_type == "relative":
+        targets = ["A", "B"]
+    else:
+        targets = sorted(df['llm_score'].unique().astype(int).astype(str))
+
     embeddings_critique = get_embeddings(df["llm_critique"].tolist(), tokenizer, model, args.batch_size)
 
     df["target_probability"], df["self_consistency_score"] = zip(*df.apply(
