@@ -109,7 +109,7 @@ if __name__ == "__main__":
     ]
     targets = None
     
-    if dataset_type == "relative":
+    if args.dataset_type == "relative":
         targets = ["A", "B"]
     else:
         targets = sorted(df['llm_score'].unique().astype(int).astype(str))
