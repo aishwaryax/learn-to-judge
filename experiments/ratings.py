@@ -1,9 +1,7 @@
 import argparse
 import os
 import csv
-from regressors.multinomial import Multinomial
 from regressors.delta_multinomial import DeltaMultinomial
-from regressors.ls import LS
 from regressors.delta_ls import DeltaLS
 from pathlib import Path
 from regressors.llm import LLMRegressor
@@ -31,18 +29,18 @@ def main():
     args = parser.parse_args()
     
     models = {
-        "LS": LS,
-        "Multinomial": Multinomial,
+        "LS": DeltaLS,
+        "Multinomial": DeltaMultinomial,
         "Delta LS": DeltaLS,
         "Delta Multinomial": DeltaMultinomial,
-        "LLMRegressor": LLMRegressor
+        "LLMRegressor": LLMRegressor,
     }
     
     for model_name, model_class in models.items():
         if model_name == "LLMRegressor":
-            model = model_class(args.train_path, args.test_path)
+            model = model_class(args.test_path)
         else:
-            model = model_class(args.train_path, args.test_path, args.train_emb_path, args.test_emb_path)
+            model = model_class(args.train_path, args.test_path, args.train_emb_path, args.test_emb_path, use_external_bias=True if "Delta" in model_name else False)
         results = model.experiment()
         
         print(f"{model_name} Experiment Results:")

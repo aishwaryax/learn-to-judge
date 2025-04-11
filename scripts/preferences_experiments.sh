@@ -1,11 +1,11 @@
 #!/bin/bash
 #SBATCH -c 4  # Number of Cores per Task
 #SBATCH --mem=40G  # Requested Memory
-#SBATCH -p gpu-preempt,gpu # Partition
+#SBATCH -p gpu # Partition
 #SBATCH -G 1  # Number of GPUs
 #SBATCH -t 23:00:00  # Job time limit
 #SBATCH -o ./jobs-exp/%j.out  # %j = job ID
-#SBATCH --constraint=[bf16]
+#SBATCH --constraint=[vram23]
 
 # Set Hugging Face cache path (replace with your desired path)
 export TRANSFORMERS_CACHE=/project/pi_wenlongzhao_umass_edu/1/models

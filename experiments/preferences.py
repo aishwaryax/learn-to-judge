@@ -1,10 +1,8 @@
 import argparse
 import os
 import csv
-from regressors.btl2 import BTL2
-from regressors.delta_btl2 import DeltaBTL2
-from regressors.multinomial import Multinomial
 from regressors.delta_multinomial import DeltaMultinomial
+from regressors.delta_btl2 import DeltaBTL2
 from regressors.llm import LLMRegressor
 from regressors.llm2 import LLM2Regressor
 from pathlib import Path
@@ -40,22 +38,22 @@ def main():
     args = parser.parse_args()    
     
     absolute_models = {
-        "BTL2": BTL2,
+        "BTL2": DeltaBTL2,
         "Delta BTL2": DeltaBTL2,
         "LLM2Regressor": LLM2Regressor
     }
     
     relative_models = {
-        "BTL": Multinomial,
+        "BTL": DeltaMultinomial,
         "Delta BTL": DeltaMultinomial,
         "LLMRegressor": LLMRegressor
     }
     
     for model_name, model_class in relative_models.items():
         if model_name == "LLMRegressor":
-            model = model_class(args.relative_train_path, args.relative_test_path)
+            model = model_class(args.relative_test_path)
         else:
-            model = model_class(args.relative_train_path, args.relative_test_path, args.relative_train_emb_path, args.relative_test_emb_path)
+            model = model_class(args.relative_train_path, args.relative_test_path, args.relative_train_emb_path, args.relative_test_emb_path, use_external_bias=True if 'Delta' in model_name else False)
         results = model.experiment()
         
         print(f"{model_name} Experiment Results:")
@@ -69,9 +67,9 @@ def main():
         
     for model_name, model_class in absolute_models.items():
         if model_name == "LLM2Regressor":
-            model = model_class(args.absolute_train_path, args.absolute_test_path)
+            model = model_class(args.absolute_test_path)
         else:
-            model = model_class(args.absolute_train_path, args.absolute_test_path, args.absolute_train_emb1_path, args.absolute_train_emb2_path, args.absolute_test_emb1_path, args.absolute_test_emb2_path)
+            model = model_class(args.absolute_train_path, args.absolute_test_path, args.absolute_train_emb1_path, args.absolute_train_emb2_path, args.absolute_test_emb1_path, args.absolute_test_emb2_path, use_external_bias=True if 'Delta' in model_name else False)
         results = model.experiment()
         
         print(f"{model_name} Experiment Results:")
