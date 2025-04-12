@@ -13,7 +13,7 @@ parser.add_argument("--model_repo", type=str, required=True, help="Path to the m
 parser.add_argument("--baseline_type", type=str, required=True, help="Baseline type: absolute or relative")
 args = parser.parse_args()
 
-dataset = load_dataset("jeevana28/nectar_llm_judge")
+dataset = load_dataset("Pranchal15/nectar_cleaned")
 # dataset["test"] = dataset["test"].select(range(10))
 # dataset["train"] = dataset["train"].select(range(10))
 
