@@ -1,12 +1,10 @@
 import argparse
 import os
 import csv
-from regressors.multinomial import Multinomial
 from regressors.delta_multinomial import DeltaMultinomial
-from regressors.ls import LS
 from regressors.delta_ls import DeltaLS
 from pathlib import Path
-from regressors.llm_regressor import LLMRegressor
+from regressors.llm import LLMRegressor
 
 def save_results(results, model_name, experiment_folder):
     experiment_folder = Path(experiment_folder)
@@ -23,26 +21,26 @@ def save_results(results, model_name, experiment_folder):
 
 def main():
     parser = argparse.ArgumentParser(description="Run Ratings Dataset experiment.")
-    parser.add_argument("train_path", type=str, help="Path to the training data CSV file.")
-    parser.add_argument("test_path", type=str, help="Path to the testing data CSV file.")
-    parser.add_argument("train_emb_path", type=str, help="Path to the training embeddings .npy file.")
-    parser.add_argument("test_emb_path", type=str, help="Path to the testing embeddings .npy file.")
-    parser.add_argument("experiment_folder", type=str, help="Folder to save experiment results.")
+    parser.add_argument("--train_path", type=str, help="Path to the training data CSV file.")
+    parser.add_argument("--test_path", type=str, help="Path to the testing data CSV file.")
+    parser.add_argument("--train_emb_path", type=str, help="Path to the training embeddings .npy file.")
+    parser.add_argument("--test_emb_path", type=str, help="Path to the testing embeddings .npy file.")
+    parser.add_argument("--experiment_folder", type=str, help="Folder to save experiment results.")
     args = parser.parse_args()
     
     models = {
-        "LS": LS,
-        "Multinomial": Multinomial,
+        "LS": DeltaLS,
+        "Multinomial": DeltaMultinomial,
         "Delta LS": DeltaLS,
         "Delta Multinomial": DeltaMultinomial,
-        "LLMRegressor": LLMRegressor
+        "LLMRegressor": LLMRegressor,
     }
     
     for model_name, model_class in models.items():
         if model_name == "LLMRegressor":
-            model = model_class(args.train_path, args.test_path)
+            model = model_class(args.test_path)
         else:
-            model = model_class(args.train_path, args.test_path, args.train_emb_path, args.test_emb_path)
+            model = model_class(args.train_path, args.test_path, args.train_emb_path, args.test_emb_path, use_external_bias=True if "Delta" in model_name else False)
         results = model.experiment()
         
         print(f"{model_name} Experiment Results:")

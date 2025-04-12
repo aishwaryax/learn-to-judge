@@ -8,9 +8,10 @@ from transformers import AutoTokenizer
 from pathlib import Path
 
 class AbsoluteLLMJudge:
-    def __init__(self, dataset, rubrics, output_file, repo_name, min_score=1, max_score=5, processed_indices={}):
+    def __init__(self, dataset, rubrics, one_shot, output_file, repo_name, min_score=1, max_score=5, processed_indices={}):
         self.dataset = dataset
         self.rubrics = rubrics
+        self.one_shot = one_shot
         self.output_file = output_file
         self.min_score = min_score
         self.max_score = max_score
@@ -33,6 +34,9 @@ class AbsoluteLLMJudge:
         2. After writing a feedback, write a score that is an integer between {self.min_score} and {self.max_score}. You should refer to the score rubric.
         3. The output format should look as follows: "(write a feedback for criteria) [RESULT] (an integer number between {self.min_score} and {self.max_score})"
         4. Please do not generate any other opening, closing, and explanations.
+
+        ### Example: 
+        {self.one_shot}
 
         ###The instruction to evaluate:
         {instruction}
