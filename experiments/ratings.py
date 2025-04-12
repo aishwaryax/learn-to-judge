@@ -49,7 +49,7 @@ def main():
                 print(f"{metric}: {value:.4f}")
             else:
                 print(f"{metric}: {value}")
-        
+        print("================================================")        
         save_results(results, model_name, args.experiment_folder)
 
 if __name__ == "__main__":

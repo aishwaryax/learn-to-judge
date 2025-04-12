@@ -1,6 +1,21 @@
 import numpy as np
 import pandas as pd
 from sklearn.metrics import mean_squared_error, mean_absolute_error, accuracy_score, precision_recall_fscore_support, r2_score
+import os
+import random
+import torch
+
+def set_seed(seed=42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)  # for multi-GPU
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    os.environ['PYTHONHASHSEED'] = str(seed)
+
+set_seed(42)
 
 class LLM2Regressor:
     def __init__(self, test_path):

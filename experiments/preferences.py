@@ -62,7 +62,7 @@ def main():
                 print(f"{metric}: {value:.4f}")
             else:
                 print(f"{metric}: {value}")
-        
+        print("================================================")
         save_results(results, model_name, args.experiment_folder)
         
     for model_name, model_class in absolute_models.items():
@@ -78,7 +78,7 @@ def main():
                 print(f"{metric}: {value:.4f}")
             else:
                 print(f"{metric}: {value}")
-        
+        print("================================================")
         save_results(results, model_name, args.experiment_folder)
 
 if __name__ == "__main__":
