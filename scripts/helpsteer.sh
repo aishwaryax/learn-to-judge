@@ -8,7 +8,7 @@
 #SBATCH --constraint=[bf16]
 
 #Example Run
-#sbatch scripts/helpsteer.sh train /project/pi_wenlongzhao_umass_edu/1/absahoo/experiment_results/prometheusv2/helpsteer/train.csv /project/pi_wenlongzhao_umass_edu/1/models/models--prometheus-eval--prometheus-7b-v2.0/snapshots/66ffb1fc20beebfb60a3964a957d9011723116c5
+# sbatch scripts/helpsteer.sh train /project/pi_wenlongzhao_umass_edu/1/absahoo/experiment_results/prometheusv2/helpsteer/train.csv /project/pi_wenlongzhao_umass_edu/1/models/models--prometheus-eval--prometheus-7b-v2.0/snapshots/66ffb1fc20beebfb60a3964a957d9011723116c5
 
 # Set Hugging Face cache path (replace with your desired path)
 export TRANSFORMERS_CACHE=/project/pi_wenlongzhao_umass_edu/1/models

@@ -85,6 +85,8 @@ if __name__ == "__main__":
 
     input_dir = os.path.dirname(os.path.abspath(args.input_file))
     output_prefix = os.path.join(input_dir, args.output_prefix)
+    last_index_file = f"{output_prefix}_last_index.txt"
+
     tokenizer, model = load_model(args.model_repo)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.unk_token if tokenizer.unk_token else tokenizer.eos_token
@@ -99,27 +101,58 @@ if __name__ == "__main__":
         pd.to_numeric(df["llm_score2"], errors='coerce').astype('Int64').notna()
     ]
 
-    embeddings_critique1 = get_embeddings(df["llm_critique1"].tolist(), tokenizer, model, args.batch_size)
-    embeddings_critique2 = get_embeddings(df["llm_critique2"].tolist(), tokenizer, model, args.batch_size)
+    output_csv_file = f"{output_prefix}_with_scores_embeddings.csv"
+    critique1_embed_file = f"{output_prefix}_critique1.npy"
+    critique2_embed_file = f"{output_prefix}_critique2.npy"
+    CHUNK_SIZE = 100
+
+    # Read start index from file, or default to 0
+    if os.path.exists(last_index_file):
+        with open(last_index_file, 'r') as f:
+            start_idx = int(f.read().strip())
+    else:
+        start_idx = 0
+
     targets = list(sorted(set(df['llm_score1'].unique().astype(int).astype(str)).union(df['llm_score2'].unique().astype(int).astype(str))))
-    df["target_probability1"], df["self_consistency_score1"] = zip(*df.apply(
-            lambda row: compute_scores(
-                row["llm_prompt1"], row["llm_response1"], targets, tokenizer, model
-            ), axis=1
+
+    for start in range(start_idx, len(df), CHUNK_SIZE):
+        end = min(start + CHUNK_SIZE, len(df))  # Ensure we don't go past the end
+        chunk = df.iloc[start:end].copy()
+
+        if chunk.empty:
+            break  # In case start_idx >= len(df)
+
+        embeddings_critique1 = get_embeddings(chunk["llm_critique1"].tolist(), tokenizer, model, args.batch_size)
+        embeddings_critique2 = get_embeddings(chunk["llm_critique2"].tolist(), tokenizer, model, args.batch_size)
+
+        chunk["target_probability1"], chunk["self_consistency_score1"] = zip(*chunk.apply(
+            lambda row: compute_scores(row["llm_prompt1"], row["llm_response1"], targets, tokenizer, model), axis=1
         ))
-    df["target_probability2"], df["self_consistency_score2"] = zip(*df.apply(
-            lambda row: compute_scores(
-                row["llm_prompt2"], row["llm_response2"], targets, tokenizer, model
-            ), axis=1
+        chunk["target_probability2"], chunk["self_consistency_score2"] = zip(*chunk.apply(
+            lambda row: compute_scores(row["llm_prompt2"], row["llm_response2"], targets, tokenizer, model), axis=1
         ))
-    np.save(f"{args.output_prefix}_critique1.npy", embeddings_critique1)
-    np.save(f"{args.output_prefix}_critique2.npy", embeddings_critique2)
 
-    df["embedding_index_critique1"] = np.arange(len(df))
-    df["embedding_index_critique2"] = np.arange(len(df))
+        chunk["embedding_index_critique1"] = np.arange(start, end)
+        chunk["embedding_index_critique2"] = np.arange(start, end)
 
-    df.to_csv(f"{args.output_prefix}_with_scores_embeddings.csv", index=False)
+        # Save chunk to CSV
+        chunk.to_csv(output_csv_file, index=False, mode='a', header=not os.path.exists(output_csv_file))
 
-    print(f"Generated embeddings saved to {args.output_prefix}_critique1.npy and {args.output_prefix}_critique2.npy")
-    print(f"Generated logits saved to {args.output_prefix}_response1_logits.npy and {args.output_prefix}_response2_logits.npy")
-    print(f"Updated CSV saved to {args.output_prefix}.csv")
+        # Save embeddings
+        if not os.path.exists(critique1_embed_file):
+            np.save(critique1_embed_file, embeddings_critique1)
+        else:
+            prev_embed1 = np.load(critique1_embed_file)
+            np.save(critique1_embed_file, np.vstack([prev_embed1, embeddings_critique1]))
+
+        if not os.path.exists(critique2_embed_file):
+            np.save(critique2_embed_file, embeddings_critique2)
+        else:
+            prev_embed2 = np.load(critique2_embed_file)
+            np.save(critique2_embed_file, np.vstack([prev_embed2, embeddings_critique2]))
+
+        # Update last index file
+        with open(last_index_file, 'w') as f:
+            f.write(str(end))
+
+        print(f"Processed and saved chunk {start} to {end}")

@@ -7,7 +7,7 @@
 #SBATCH -o ./jobs-exp/%j.out  # %j = job ID
 #SBATCH --constraint=[bf16]
 
-#sbatch scripts/create_embedding_pair.sh /project/pi_wenlongzhao_umass_edu/1/models/models--prometheus-eval--prometheus-7b-v2.0/snapshots/66ffb1fc20beebfb60a3964a957d9011723116c5 /project/pi_wenlongzhao_umass_edu/1/absahoo/experiment_results/prometheusv2/nectar/absolute_test.csv train_embeddings 2
+# sbatch scripts/create_embedding_pair.sh /project/pi_wenlongzhao_umass_edu/1/models/models--prometheus-eval--prometheus-7b-v2.0/snapshots/66ffb1fc20beebfb60a3964a957d9011723116c5 /project/pi_wenlongzhao_umass_edu/1/absahoo/experiment_results/prometheusv2/nectar/absolute_test.csv train_embeddings 2
 
 # Set Hugging Face cache path (replace with your desired path)
 export TRANSFORMERS_CACHE=/project/pi_wenlongzhao_umass_edu/1/models
@@ -28,3 +28,5 @@ python utils/create_embedding_pair.py \
       --input_file "$input_file" \
       --output_prefix "$output_prefix" \
       --batch_size "$batch_size"
+
+# sbatch scripts/create_embedding_pair.sh /project/pi_wenlongzhao_umass_edu/1/models/models--prometheus-eval--prometheus-7b-v2.0/snapshots/66ffb1fc20beebfb60a3964a957d9011723116c5 /project/pi_wenlongzhao_umass_edu/1/jkarnuthala/experiment_results/prometheusv2/nectar/absolute_train.csv train_embeddings 2
