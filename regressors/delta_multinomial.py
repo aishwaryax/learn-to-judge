@@ -27,9 +27,11 @@ set_seed(42)
 class MNJudge(nn.Module):
     def __init__(self, input_dim, num_classes):
         super(MNJudge, self).__init__()
+        # Theta has an extra row because the input X is augmented with a bias column.
         self.Theta = nn.Parameter(torch.zeros(input_dim + 1, num_classes))
     
     def forward(self, X, log_p):
+        # Logits are computed as a linear transformation of X plus the external bias log_p.
         logits = X @ self.Theta + log_p
         return F.softmax(logits, dim=1)
 
@@ -60,6 +62,7 @@ class DeltaMultinomial:
         for _, row in df.iterrows():
             tp = row["target_probability"]
             p_vec = np.zeros(len(label_classes))
+            # Make sure that the probability vector order matches label_encoder.classes_
             for idx, key in enumerate(indices):
                 if key in tp:
                     p_vec[idx] = tp[key]
@@ -86,7 +89,7 @@ class DeltaMultinomial:
             df["llm_score"] = df["llm_score"].astype(int)
             df["target_probability"] = df["target_probability"].apply(ast.literal_eval)
 
-        total_rows = len(train_df)
+        total_rows = min(len(train_df), train_embeddings.shape[0])
         sample_size = int((self.size / 100.0) * total_rows)
         selected_indices = np.random.choice(train_df.index, size=sample_size, replace=False)
         train_df = train_df.loc[selected_indices].reset_index(drop=True)
@@ -113,17 +116,20 @@ class DeltaMultinomial:
     def train_model(self, X_train, y_train, log_p_train, 
                     X_val=None, y_val=None, log_p_val=None, 
                     early_stopping_patience=10):
+        # Convert training data to tensors
         X_train_t = torch.tensor(X_train, dtype=torch.float32, device=self.device)
         if self.use_external_bias:
             log_p_train_t = torch.tensor(log_p_train, dtype=torch.float32, device=self.device)
         else:
-            log_p_train_t = torch.zeros((X_train.shape[0], self.label_encoder.classes_.shape[0]), 
-                                          dtype=torch.float32, device=self.device)
+            # Use zeros if external bias is disabled.
+            num_classes = self.label_encoder.classes_.shape[0]
+            log_p_train_t = torch.zeros((X_train.shape[0], num_classes), dtype=torch.float32, device=self.device)
         y_train_t = torch.tensor(y_train, dtype=torch.long, device=self.device)
 
         n, input_dim_aug = X_train.shape
         num_classes = log_p_train.shape[1]
 
+        # Initialize the model; note that we pass the unaugmented input dimension.
         self.model = MNJudge(input_dim=input_dim_aug - 1, num_classes=num_classes).to(self.device)
         optimizer = optim.Adam(self.model.parameters(), lr=self.lr)
 
@@ -139,6 +145,7 @@ class DeltaMultinomial:
             log_probs = F.log_softmax(logits, dim=1)
             loss = F.nll_loss(log_probs, y_train_t)
 
+            # Add regularization penalties if set
             if self.lambda_l2 > 0:
                 l2_reg = torch.sum(self.model.Theta ** 2)
                 loss += self.lambda_l2 * l2_reg
@@ -149,6 +156,7 @@ class DeltaMultinomial:
             loss.backward()
             optimizer.step()
 
+            # Validation phase (if provided)
             if X_val is not None and y_val is not None and log_p_val is not None:
                 self.model.eval()
                 with torch.no_grad():
@@ -157,7 +165,7 @@ class DeltaMultinomial:
                         log_p_val_t = torch.tensor(log_p_val, dtype=torch.float32, device=self.device)
                     else:
                         log_p_val_t = torch.zeros((X_val.shape[0], num_classes),
-                                                  dtype=torch.float32, device=self.device)
+                                                    dtype=torch.float32, device=self.device)
                     y_val_t = torch.tensor(y_val, dtype=torch.long, device=self.device)
                     val_logits = X_val_t @ self.model.Theta + log_p_val_t
                     val_log_probs = F.log_softmax(val_logits, dim=1)
@@ -169,108 +177,7 @@ class DeltaMultinomial:
                         l1_reg = torch.sum(torch.abs(self.model.Theta))
                         val_loss += self.lambda_l1 * l1_reg
 
-                if epoch < self.min_epochs:
-                    continue
-
-                if val_loss.item() < best_val_loss - 1e-4:
-                    best_val_loss = val_loss.item()
-                    best_state_dict = {k: v.cpu().clone() for k, v in self.model.state_dict().items()}
-                    epochs_without_improvement = 0
-                else:
-                    epochs_without_improvement += 1
-
-                if epochs_without_improvement >= early_stopping_patience:
-                    print(f"Early stopping triggered at epoch {epoch}")
-                    if best_state_dict is not None:
-                        self.model.load_state_dict(best_state_dict)
-                    break
-                
-    def tune_hyperparameters(self, X_train, y_train, log_p_train, X_val, y_val, log_p_val,
-                         lambda_l2_values, patience=10):
-        best_acc_score = 0
-        best_lambda_l2 = self.lambda_l2
-        best_state_dict = None
-
-        for l2 in lambda_l2_values:
-            self.lambda_l2 = l2
-
-            model = self.train_model(X_train, y_train, log_p_train, 
-                                    X_val, y_val, log_p_val, 
-                                    early_stopping_patience=patience)
-            val_preds, val_probs = self.predict(X_val, log_p_val)
-            average_val = "weighted" if len(np.unique(y_train)) != 2 else "binary"
-            val_acc_score = accuracy_score(y_val, val_preds)
-            print(f"Validation Accuracy: {val_acc_score:.4f} @ λ₂: {l2}")
-            if val_acc_score > best_acc_score:
-                best_acc_score = val_acc_score
-                best_lambda_l2 = l2
-                best_state_dict = {k: v.cpu().clone() for k, v in model.state_dict().items()}
-
-        print(f"Best regularization: λ₂={best_lambda_l2} with validation accuracy {best_acc_score:.4f}")
-        self.lambda_l2 = best_lambda_l2
-        if best_state_dict is not None:
-            self.model.load_state_dict(best_state_dict)
-
-
-    def train_model(self, X_train, y_train, log_p_train, 
-                X_val=None, y_val=None, log_p_val=None, 
-                early_stopping_patience=10):
-        X_train_t = torch.tensor(X_train, dtype=torch.float32, device=self.device)
-        if self.use_external_bias:
-            log_p_train_t = torch.tensor(log_p_train, dtype=torch.float32, device=self.device)
-        else:
-            log_p_train_t = torch.zeros((X_train.shape[0], self.label_encoder.classes_.shape[0]), 
-                                        dtype=torch.float32, device=self.device)
-        y_train_t = torch.tensor(y_train, dtype=torch.long, device=self.device)
-
-        n, input_dim_aug = X_train.shape
-        num_classes = log_p_train.shape[1]
-
-        self.model = MNJudge(input_dim=input_dim_aug - 1, num_classes=num_classes).to(self.device)
-        optimizer = optim.Adam(self.model.parameters(), lr=self.lr)
-
-        best_val_loss = float('inf')
-        best_state_dict = None
-        epochs_without_improvement = 0
-
-        for epoch in range(1, self.epochs + 1):
-            self.model.train()
-            optimizer.zero_grad()
-
-            logits = X_train_t @ self.model.Theta + log_p_train_t
-            log_probs = F.log_softmax(logits, dim=1)
-            loss = F.nll_loss(log_probs, y_train_t)
-
-            if self.lambda_l2 > 0:
-                l2_reg = torch.sum(self.model.Theta ** 2)
-                loss += self.lambda_l2 * l2_reg
-            if self.lambda_l1 > 0:
-                l1_reg = torch.sum(torch.abs(self.model.Theta))
-                loss += self.lambda_l1 * l1_reg
-
-            loss.backward()
-            optimizer.step()
-
-            if X_val is not None and y_val is not None and log_p_val is not None:
-                self.model.eval()
-                with torch.no_grad():
-                    X_val_t = torch.tensor(X_val, dtype=torch.float32, device=self.device)
-                    if self.use_external_bias:
-                        log_p_val_t = torch.tensor(log_p_val, dtype=torch.float32, device=self.device)
-                    else:
-                        log_p_val_t = torch.zeros((X_val.shape[0], num_classes),
-                                                dtype=torch.float32, device=self.device)
-                    y_val_t = torch.tensor(y_val, dtype=torch.long, device=self.device)
-                    val_logits = X_val_t @ self.model.Theta + log_p_val_t
-                    val_log_probs = F.log_softmax(val_logits, dim=1)
-                    val_loss = F.nll_loss(val_log_probs, y_val_t)
-                    if self.lambda_l2 > 0:
-                        l2_reg = torch.sum(self.model.Theta ** 2)
-                        val_loss += self.lambda_l2 * l2_reg
-                    if self.lambda_l1 > 0:
-                        l1_reg = torch.sum(torch.abs(self.model.Theta))
-                        val_loss += self.lambda_l1 * l1_reg
-
+                # Skip early stopping check before minimum epochs are completed.
                 if epoch < self.min_epochs:
                     continue
 
@@ -288,6 +195,32 @@ class DeltaMultinomial:
                     break
 
         return self.model
+
+    def tune_hyperparameters(self, X_train, y_train, log_p_train, X_val, y_val, log_p_val,
+                               lambda_l2_values, patience=10):
+        best_acc_score = 0
+        best_lambda_l2 = self.lambda_l2
+        best_state_dict = None
+
+        for l2 in lambda_l2_values:
+            self.lambda_l2 = l2
+
+            model = self.train_model(X_train, y_train, log_p_train, 
+                                     X_val, y_val, log_p_val, 
+                                     early_stopping_patience=patience)
+            val_preds, _ = self.predict(X_val, log_p_val)
+            average_val = "weighted" if len(np.unique(y_train)) != 2 else "binary"
+            val_acc_score = accuracy_score(y_val, val_preds)
+            print(f"Validation Accuracy: {val_acc_score:.4f} @ λ₂: {l2}")
+            if val_acc_score > best_acc_score:
+                best_acc_score = val_acc_score
+                best_lambda_l2 = l2
+                best_state_dict = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+
+        print(f"Best regularization: λ₂={best_lambda_l2} with validation accuracy {best_acc_score:.4f}")
+        self.lambda_l2 = best_lambda_l2
+        if best_state_dict is not None:
+            self.model.load_state_dict(best_state_dict)
 
     def _predict_internal(self, X, log_p):
         X_t = torch.tensor(X, dtype=torch.float32, device=self.device)
@@ -348,7 +281,7 @@ class DeltaMultinomial:
         return results
 
 # Example usage:
-# model_wrapper = DeltaMultinomialV2(
+# model_wrapper = DeltaMultinomial(
 #     train_path='train.csv', test_path='test.csv',
 #     train_emb_path='train_emb.npy', test_emb_path='test_emb.npy',
 #     size=100, lr=1e-3, epochs=10000, lambda_l2=0.0, lambda_l1=0.0,

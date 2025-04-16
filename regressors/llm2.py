@@ -58,6 +58,7 @@ class LLM2Regressor:
         X_test, y_test = self.preprocess()
         y_pred = self.predict(X_test)
 
+        min_pred, max_pred = np.min(y_pred), np.max(y_pred)
         mse = mean_squared_error(y_test, y_pred)
         mae = mean_absolute_error(y_test, y_pred)
         r2 = r2_score(y_test, y_pred)
@@ -77,6 +78,8 @@ class LLM2Regressor:
             "MSE": mse,
             "MAE": mae,
             "R2 Score": r2,
+            "Min Prediction": min_pred,
+            "Max Prediction": max_pred,
             "Accuracy": accuracy,
             "Precision": precision,
             "Recall": recall,

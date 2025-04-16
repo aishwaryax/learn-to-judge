@@ -68,9 +68,10 @@ class DeltaBTL2:
             df.dropna(subset=["human_score", "llm_score1", "llm_score2", "embedding_index_critique1", "embedding_index_critique2"], inplace=True)
             df["human_score"] = df["human_score"].astype(int)
 
-        total_rows = len(train_df)
+        total_rows = min(len(train_df), emb_train1.shape[0], emb_train2.shape[0])
         sample_size = int((self.size / 100.0) * total_rows)
-        train_df = train_df.sample(n=sample_size, random_state=42).reset_index(drop=True)
+        selected_indices = np.random.choice(train_df.index, size=sample_size, replace=False)
+        train_df = train_df.loc[selected_indices].reset_index(drop=True)
 
         X_train = emb_train1[train_df["embedding_index_critique1"].values] - emb_train2[train_df["embedding_index_critique2"].values]
         y_train = train_df["human_score"].values
