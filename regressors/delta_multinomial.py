@@ -1,8 +1,7 @@
 import numpy as np
 import pandas as pd
 import ast
-from sklearn.metrics import accuracy_score, mean_squared_error, mean_absolute_error, precision_recall_fscore_support, confusion_matrix
-from sklearn.metrics import r2_score
+from sklearn.metrics import accuracy_score, mean_squared_error, mean_absolute_error, r2_score, precision_recall_fscore_support, confusion_matrix
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 import torch

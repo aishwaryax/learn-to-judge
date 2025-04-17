@@ -9,7 +9,6 @@ from sklearn.model_selection import train_test_split
 import random
 import os
 from scipy.stats import pearsonr, spearmanr, kendalltau
-from scipy.stats import pearsonr, spearmanr, kendalltau
 
 def set_seed(seed=42):
     random.seed(seed)
