@@ -130,6 +130,9 @@ class AbsoluteLLMJudge:
             response2 = item["response2"]
             human_score = item["human_score"]
 
+            if response1 is None or response2 is None:
+                continue
+
             llm_response1 = None
             llm_response2 = None
 

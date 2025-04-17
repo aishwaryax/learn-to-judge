@@ -4,10 +4,11 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, TensorDataset
 import numpy as np
 import pandas as pd
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score, accuracy_score, precision_recall_fscore_support
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score, accuracy_score, precision_recall_fscore_support, confusion_matrix
 from sklearn.model_selection import train_test_split
 import os
 import random
+from scipy.stats import pearsonr, spearmanr, kendalltau
 
 def set_seed(seed=42):
     random.seed(seed)
@@ -166,7 +167,17 @@ class DeltaLS:
         precision, recall, f1, _ = precision_recall_fscore_support(
             y_true_rounded, y_pred_rounded, average='weighted', zero_division=0
         )
+        
+        classes = np.unique(y_true_rounded).astype(int)
+        min_class, max_class = classes.min(), classes.max()
+        
+        cm = confusion_matrix(y_true_rounded, y_pred_rounded, labels=classes)
 
+        y_np = y if isinstance(y, np.ndarray) else y.cpu().numpy()
+        pearson_r,  _ = pearsonr(y_np, y_pred)
+        spearman_r, _ = spearmanr(y_np, y_pred)
+        kendall_tau, _ = kendalltau(y_np, y_pred)
+        
         return {
             "MSE": mse,
             "MAE": mae,
@@ -177,6 +188,11 @@ class DeltaLS:
             "Precision": precision,
             "Recall": recall,
             "F1 Score": f1,
+            "Confusion Matrix": cm,
+            "Class Labels": classes.tolist(),
+            "Pearson r": pearson_r,
+            "Spearman ρ": spearman_r,
+            "Kendall τ": kendall_tau,
         }
 
     def experiment(self):

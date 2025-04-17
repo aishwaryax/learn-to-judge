@@ -5,6 +5,7 @@ from regressors.delta_multinomial import DeltaMultinomial
 from regressors.delta_ls import DeltaLS
 from pathlib import Path
 from regressors.llm import LLMRegressor
+from regressors.mean_human_baseline import MeanHumanRegressor
 
 def save_results(results, model_name, experiment_folder):
     experiment_folder = Path(experiment_folder)
@@ -34,11 +35,12 @@ def main():
         "Delta LS": DeltaLS,
         "Delta Multinomial": DeltaMultinomial,
         "LLMRegressor": LLMRegressor,
+        "Mean Human": MeanHumanRegressor,
     }
     
     for model_name, model_class in models.items():
-        if model_name == "LLMRegressor":
-            model = model_class(args.test_path)
+        if model_name == "LLMRegressor" or model_name == "Mean Human":
+            model = model_class(args.test_path)            
         else:
             model = model_class(args.train_path, args.test_path, args.train_emb_path, args.test_emb_path, use_external_bias=True if "Delta" in model_name else False)
         results = model.experiment()

@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 import ast
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, mean_squared_error, mean_absolute_error, precision_recall_fscore_support
+from sklearn.metrics import accuracy_score, mean_squared_error, mean_absolute_error, precision_recall_fscore_support, confusion_matrix
 from sklearn.metrics import r2_score
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
@@ -11,6 +11,7 @@ import torch.optim as optim
 import torch.nn.functional as F
 import os
 import random
+from scipy.stats import pearsonr, spearmanr, kendalltau
 
 def set_seed(seed=42):
     random.seed(seed)
@@ -252,7 +253,23 @@ class DeltaMultinomial:
         precision, recall, f1, _ = precision_recall_fscore_support(
             y_test, y_pred, average=average_val, zero_division=1
         )
+
+        encoded_classes = np.arange(len(self.label_encoder.classes_))
         
+        cm = confusion_matrix(y_test, y_pred, labels=encoded_classes)
+
+        if proba.shape[1] == 2:
+            expected_score = proba[:, 1]
+        else:
+            class_vals = self.label_encoder.inverse_transform(
+                np.arange(proba.shape[1])
+            ).astype(float)
+            expected_score = np.dot(proba, class_vals)
+        pearson_r,  _ = pearsonr(y_test, expected_score)
+        spearman_rho, _ = spearmanr(y_test, expected_score)
+        kendall_tau, _ = kendalltau(y_test, expected_score)
+        
+
         return {
             "MSE": mse,
             "MAE": mae,
@@ -262,7 +279,12 @@ class DeltaMultinomial:
             "Accuracy": accuracy_val,
             "Precision": precision,
             "Recall": recall,
-            "F1 Score": f1
+            "F1 Score": f1,
+            "Confusion Matrix": cm,
+            "Class Labels": self.label_encoder.classes_.tolist(),
+            "Pearson r": pearson_r,
+            "Spearman ρ": spearman_rho,
+            "Kendall τ": kendall_tau,
         }
         
     def experiment(self):

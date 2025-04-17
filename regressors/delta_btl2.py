@@ -4,11 +4,12 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score, accuracy_score, precision_recall_fscore_support
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, mean_squared_error, mean_absolute_error, precision_recall_fscore_support
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score, accuracy_score, precision_recall_fscore_support, confusion_matrix
 from sklearn.model_selection import train_test_split
 import random
 import os
+from scipy.stats import pearsonr, spearmanr, kendalltau
+from scipy.stats import pearsonr, spearmanr, kendalltau
 
 def set_seed(seed=42):
     random.seed(seed)
@@ -207,6 +208,13 @@ class DeltaBTL2:
                 y_test, y_pred, average=average_val, zero_division=1
             )
             
+            classes = np.unique(y_test).astype(int)
+            cm = confusion_matrix(y_test, y_pred, labels=classes)
+            
+            pearson_r,  _ = pearsonr(y_test, preds)
+            spearman_rho, _ = spearmanr(y_test, preds)
+            kendall_tau, _ = kendalltau(y_test, preds)
+
             return {
                 "MSE": mse,
                 "MAE": mae,
@@ -217,6 +225,11 @@ class DeltaBTL2:
                 "Precision": precision,
                 "Recall": recall,
                 "F1 Score": f1,
+                "Confusion Matrix": cm,
+                "Class Labels": classes.tolist(),
+                "Pearson r": pearson_r,
+                "Spearman ρ": spearman_rho,
+                "Kendall τ": kendall_tau,
             }
 
     def experiment(self, use_external_bias=True):
