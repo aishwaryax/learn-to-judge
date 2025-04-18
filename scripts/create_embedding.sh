@@ -3,7 +3,7 @@
 #SBATCH --mem=40G  # Requested Memory
 #SBATCH -p gpu,superpod-a100 # Partition
 #SBATCH -G 1  # Number of GPUs
-#SBATCH -t 23:00:00  # Job time limit
+#SBATCH -t 2-00:00:00  # Job time limit
 #SBATCH -o ./jobs-exp/%j.out  # %j = job ID
 #SBATCH --constraint="vram80"
 

@@ -4,19 +4,38 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, TensorDataset
 import numpy as np
 import pandas as pd
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score, accuracy_score, precision_recall_fscore_support
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score, accuracy_score, precision_recall_fscore_support, confusion_matrix
 from sklearn.model_selection import train_test_split
+import os
+import random
+from scipy.stats import pearsonr, spearmanr, kendalltau
+
+def set_seed(seed=42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)  # for multi-GPU
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    os.environ['PYTHONHASHSEED'] = str(seed)
+
+set_seed(42)
 
 class TorchDeltaLS(nn.Module):
-    def __init__(self, input_dim):
+    def __init__(self, input_dim, lambda_l2=0.1):
         super().__init__()
-        self.linear = nn.Linear(input_dim, 1, bias=True)  # Always use learned bias
-
+        self.linear = nn.Linear(input_dim, 1, bias=True)
+        self.lambda_l2 = lambda_l2
     def forward(self, x):
         return self.linear(x).squeeze(-1)
 
+    def l2_regularization(self):
+        return self.lambda_l2 * torch.sum(self.linear.weight ** 2)
+
 class DeltaLS:
-    def __init__(self, train_path, test_path, train_emb_path, test_emb_path, size=100, use_external_bias=True):
+    def __init__(self, train_path, test_path, train_emb_path, test_emb_path, size=100, use_external_bias=True, seed=42):
+        set_seed(seed)
         self.train_path = train_path
         self.test_path = test_path
         self.train_emb_path = train_emb_path
@@ -24,7 +43,11 @@ class DeltaLS:
         self.size = size
         self.use_external_bias = use_external_bias
         self.model = None
-        self.best_alpha = None
+        self.best_lambda_l2 = None
+        self.epochs = 10000
+        self.min_epochs = 200
+        self.early_stopping_patience = 10
+        self.lr = 1e-3
 
     def preprocess(self):
         train_df = pd.read_csv(self.train_path)
@@ -58,86 +81,78 @@ class DeltaLS:
 
         return map(torch.tensor, (X_train, X_val, y_train, y_val, X_test, y_test))
 
-    def tune_hyperparameters(self, X_train, X_val, y_train, y_val, alphas, epochs=100, lr=1e-3, patience=10):
+    def tune_hyperparameters(self, X_train, X_val, y_train, y_val, lambda_l2_values):
         best_loss = float('inf')
         input_dim = X_train.shape[1]
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        for alpha in alphas:
-            model = TorchDeltaLS(input_dim).to(device)
-            optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+        best_lambda_l2 = None
+        best_model_state = None
 
-            early_stop_counter = 0
-            best_model_state = None
+        for lambda_l2 in lambda_l2_values:
+            model = TorchDeltaLS(input_dim, lambda_l2).to(device)
 
-            for epoch in range(epochs):
-                model.train()
-                optimizer.zero_grad()
-                preds = model(X_train.to(device))
-                loss = F.mse_loss(preds, y_train.to(device)) + alpha * torch.norm(model.linear.weight, p=2) ** 2
-                loss.backward()
-                optimizer.step()
+            model = self.train(X_train, X_val, y_train, y_val, lambda_l2=lambda_l2)  # One step training to evaluate
 
-                model.eval()
-                with torch.no_grad():
-                    val_preds = model(X_val.to(device))
-                    val_loss = F.mse_loss(val_preds, y_val.to(device)).item()
+            with torch.no_grad():
+                preds = model(X_val.to(device))
+                loss = F.mse_loss(preds, y_val.to(device)) + model.l2_regularization()
+            print(f"Validation MSE: {loss:.4f} @ λ₂: {lambda_l2}")
+            if loss < best_loss:
+                best_loss = loss
+                best_lambda_l2 = lambda_l2
+                best_model_state = model.state_dict()
+        print(f"Best regularization: λ₂={best_lambda_l2} with MSE {best_loss:.4f}")
+        self.best_lambda_l2 = best_lambda_l2
+        self.model = TorchDeltaLS(input_dim, self.best_lambda_l2).to(device)
+        self.model.load_state_dict(best_model_state)
 
-                if val_loss < best_loss:
-                    best_loss = val_loss
-                    self.model = model
-                    self.best_alpha = alpha
-                    best_model_state = model.state_dict()
-                    early_stop_counter = 0
-                else:
-                    early_stop_counter += 1
-                    if early_stop_counter >= patience:
-                        print(f"Early stopping at epoch {epoch} for alpha={alpha}")
-                        break
-
-            if best_model_state is not None:
-                self.model.load_state_dict(best_model_state)
-
-        print(f"Best alpha: {self.best_alpha}")
-
-    def train(self, X, y, epochs=100, lr=1e-3, patience=10):
+    def train(self, X_train, X_val, y_train, y_val, lambda_l2=None):
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        input_dim = X_train.shape[1]
+        self.model = TorchDeltaLS(input_dim, lambda_l2).to(device)
+        if lambda_l2 is not None:
+            self.model.lambda_l2 = lambda_l2
+
         self.model.train()
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
 
         best_loss = float('inf')
         early_stop_counter = 0
         best_model_state = None
 
-        for epoch in range(epochs):
+        for epoch in range(self.epochs):
             optimizer.zero_grad()
-            preds = self.model(X.to(device))
-            loss = F.mse_loss(preds, y.to(device)) + self.best_alpha * torch.norm(self.model.linear.weight, p=2) ** 2
+            preds = self.model(X_train.to(device))
+            loss = F.mse_loss(preds, y_train.to(device)) + self.model.l2_regularization()
             loss.backward()
             optimizer.step()
 
-            # Track loss for early stopping
+            if epoch < self.min_epochs:
+                continue
+
             loss_val = loss.item()
-            if loss_val < best_loss:
+            if loss_val < best_loss - 1e-4:
                 best_loss = loss_val
                 best_model_state = self.model.state_dict()
                 early_stop_counter = 0
             else:
                 early_stop_counter += 1
-                if early_stop_counter >= patience:
-                    print(f"Early stopping during final training at epoch {epoch}")
+                if early_stop_counter >= self.early_stopping_patience:
+                    print(f"Early stopping during training at epoch {epoch}")
                     break
 
         if best_model_state is not None:
             self.model.load_state_dict(best_model_state)
 
+        return self.model
 
     def predict(self, X):
         self.model.eval()
         with torch.no_grad():
             return self.model(X.to(self.model.linear.weight.device)).cpu().numpy()
 
-    def eval(self, X, y):
+    def evaluate(self, X, y):
         y_pred = self.predict(X)
         min_pred, max_pred = np.min(y_pred), np.max(y_pred)
 
@@ -152,7 +167,17 @@ class DeltaLS:
         precision, recall, f1, _ = precision_recall_fscore_support(
             y_true_rounded, y_pred_rounded, average='weighted', zero_division=0
         )
+        
+        classes = np.unique(y_true_rounded).astype(int)
+        min_class, max_class = classes.min(), classes.max()
+        
+        cm = confusion_matrix(y_true_rounded, y_pred_rounded, labels=classes)
 
+        y_np = y if isinstance(y, np.ndarray) else y.cpu().numpy()
+        pearson_r,  _ = pearsonr(y_np, y_pred)
+        spearman_r, _ = spearmanr(y_np, y_pred)
+        kendall_tau, _ = kendalltau(y_np, y_pred)
+        
         return {
             "MSE": mse,
             "MAE": mae,
@@ -163,6 +188,11 @@ class DeltaLS:
             "Precision": precision,
             "Recall": recall,
             "F1 Score": f1,
+            "Confusion Matrix": cm,
+            "Class Labels": classes.tolist(),
+            "Pearson r": pearson_r,
+            "Spearman ρ": spearman_r,
+            "Kendall τ": kendall_tau,
         }
 
     def experiment(self):
@@ -171,11 +201,11 @@ class DeltaLS:
         X_train, X_val, X_test = X_train.float(), X_val.float(), X_test.float()
         y_train, y_val, y_test = y_train.float(), y_val.float(), y_test.float()
 
-        alphas = [10.0 ** i for i in np.arange(-3, 4)]
-        self.tune_hyperparameters(X_train, X_val, y_train, y_val, alphas)
+        lambda_l2_values = [10.0 ** x for x in range(-5, 6)]
 
-        X_full_train = torch.cat([X_train, X_val], dim=0)
-        y_full_train = torch.cat([y_train, y_val], dim=0)
-        self.train(X_full_train, y_full_train)
+        self.tune_hyperparameters(X_train, X_val, y_train, y_val, lambda_l2_values)
 
-        return self.eval(X_test, y_test)
+        self.model = self.train(X_train, X_val, y_train, y_val, lambda_l2=self.best_lambda_l2)
+
+        results = self.evaluate(X_test, y_test)
+        return results

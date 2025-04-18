@@ -1,6 +1,23 @@
 import numpy as np
 import pandas as pd
 from sklearn.metrics import mean_squared_error, mean_absolute_error, accuracy_score, precision_recall_fscore_support, r2_score
+import os
+import random
+import torch
+from scipy.stats import pearsonr, spearmanr, kendalltau
+from sklearn.metrics import confusion_matrix
+
+def set_seed(seed=42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)  # for multi-GPU
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    os.environ['PYTHONHASHSEED'] = str(seed)
+
+set_seed(42)
 
 class LLMRegressor:
     def __init__(self, test_path):
@@ -48,6 +65,13 @@ class LLMRegressor:
             y_test, y_pred, average=average_val, zero_division=1
         )
         
+        classes = np.unique(y_test).astype(int)
+        cm      = confusion_matrix(y_test, y_pred, labels=classes)
+
+        pearson_r,  _ = pearsonr(y_test, y_pred)
+        spearman_rho, _ = spearmanr(y_test, y_pred)
+        kendall_tau, _ = kendalltau(y_test, y_pred)
+        
         return {
             "MSE": mse,
             "MAE": mae,
@@ -57,7 +81,12 @@ class LLMRegressor:
             "Accuracy": accuracy,
             "Precision": precision,
             "Recall": recall,
-            "F1 Score": f1
+            "F1 Score": f1,
+            "Confusion Matrix": cm,
+            "Class Labels": classes.tolist(),
+            "Pearson r": pearson_r,
+            "Spearman ρ": spearman_rho,
+            "Kendall τ": kendall_tau
         }
         
     def experiment(self):

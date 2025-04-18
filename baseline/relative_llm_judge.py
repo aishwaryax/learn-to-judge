@@ -95,6 +95,8 @@ class RelativeLLMJudge:
                 continue
             response1 = item["response1"]
             response2 = item["response2"]
+            if response1 is None or response2 is None:
+                continue
             human_score = item["human_score"]
             llm_response, llm_prompt = self._get_judge_llm_resp(instruction, response1, response2)
             feedback, score = self._parse_feedback_and_score(llm_response)

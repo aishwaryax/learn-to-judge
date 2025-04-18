@@ -7,6 +7,7 @@ from regressors.llm import LLMRegressor
 from regressors.llm2 import LLM2Regressor
 from pathlib import Path
 import sys
+from regressors.mean_human_baseline import MeanHumanRegressor
 
 def save_results(results, model_name, experiment_folder):
     experiment_folder = Path(experiment_folder)
@@ -46,11 +47,12 @@ def main():
     relative_models = {
         "BTL": DeltaMultinomial,
         "Delta BTL": DeltaMultinomial,
-        "LLMRegressor": LLMRegressor
+        "LLMRegressor": LLMRegressor,
+        "Mean Human": MeanHumanRegressor,        
     }
     
     for model_name, model_class in relative_models.items():
-        if model_name == "LLMRegressor":
+        if model_name == "LLMRegressor" or model_name == "Mean Human":
             model = model_class(args.relative_test_path)
         else:
             model = model_class(args.relative_train_path, args.relative_test_path, args.relative_train_emb_path, args.relative_test_emb_path, use_external_bias=True if 'Delta' in model_name else False)
@@ -62,7 +64,7 @@ def main():
                 print(f"{metric}: {value:.4f}")
             else:
                 print(f"{metric}: {value}")
-        
+        print("================================================")
         save_results(results, model_name, args.experiment_folder)
         
     for model_name, model_class in absolute_models.items():
@@ -78,7 +80,7 @@ def main():
                 print(f"{metric}: {value:.4f}")
             else:
                 print(f"{metric}: {value}")
-        
+        print("================================================")
         save_results(results, model_name, args.experiment_folder)
 
 if __name__ == "__main__":

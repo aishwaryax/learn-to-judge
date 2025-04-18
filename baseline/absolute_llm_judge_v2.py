@@ -92,8 +92,6 @@ class AbsoluteLLMJudge:
             instruction = item["instruction"]
             if instruction is None:
                 continue
-            if prompt is None:
-                continue
             response1 = item["response1"]
             response2 = item["response2"]
             human_score = item["human_score"]
@@ -109,21 +107,18 @@ class AbsoluteLLMJudge:
                 if item['model2'] in self.processed_indices[item['index']]:
                     llm_response2 = self.processed_indices[item['index']][item['model2']]
             if llm_response1 is None:
-                llm_response1 = self._get_judge_llm_resp(prompt)
+                llm_response1 = self._get_judge_llm_resp(prompt1)
                 #save the response
                 if item['index'] not in self.processed_indices:
                     self.processed_indices[item['index']] = {}
                 self.processed_indices[item['index']][item['model1']] = llm_response1
 
             if llm_response2 is None:
-                llm_response2 = self._get_judge_llm_resp(prompt)
+                llm_response2 = self._get_judge_llm_resp(prompt2)
                 #save the response 
                 if item['index'] not in self.processed_indices:
                     self.processed_indices[item['index']] = {}
                 self.processed_indices[item['index']][item['model2']] = llm_response2
-
-            # llm_response2 = self._get_judge_llm_resp(instruction, response2)
-
             critique1, score1  = self._parse_feedback_and_score(llm_response1)
             critique2, score2 = self._parse_feedback_and_score(llm_response2)
 
