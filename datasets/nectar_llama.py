@@ -6,7 +6,7 @@ import random
 from datasets import load_dataset,Dataset
 from argparse import Namespace
 # from baseline.absolute_llm_judge import AbsoluteLLMJudge
-from baseline.relative_llm_judge_v2 import RelativeLLMJudge
+from baseline.relative_llm_judge_v3 import RelativeLLMJudge
 from transformers import AutoTokenizer
 
 
@@ -18,8 +18,8 @@ parser.add_argument("--baseline_type", type=str, required=True, help="Baseline t
 args = parser.parse_args()
 
 dataset = load_dataset("Pranchal15/nectar_cleaned")
-dataset["test"] = dataset["test"].select(range(10))
-dataset["train"] = dataset["train"].select(range(10))
+# dataset["test"] = dataset["test"].select(range(10))
+# dataset["train"] = dataset["train"].select(range(10))
 
 instruction_text = """You are a helpful and general purpose assistant. Answer the user query.
 <user>{}</user>"""
@@ -51,9 +51,10 @@ def get_llm_prompt(instruction, response1,response2):
         An instruction (might include an Input inside it), a response to evaluate, and a score rubric representing a evaluation criteria are given.
         1. Write a detailed feedback that assess the quality of the response strictly based on the given score rubric, not evaluating in general.
         2. Make comparisons between Response A and Response B. Instead of examining Response A and Response B separately, go straight to the point and mention about the commonalities and differences between them.
-        3. After writing the feedback, indicate the better response, either "A" or "B".
+        3. After writing the feedback, indicate the better response, either "A" or "B". You should refer to the score rubric.
         4. The output format should look as follows: "Feedback: (write a feedback) [RESULT] (Either "A" or "B")"
-
+        5. Please do not generate any other opening, closing, and explanations and strictly follow the format.
+         
         The instruction to evaluate:
         {instruction}
 
@@ -89,15 +90,17 @@ def transform_data(example):
     }
 
 def parse_feedback_and_score_prometheus(text):
-    result_match = re.search(r"\[RESULT\]\s*(\d+)", text)
+    result_match = re.search(r"RESULT:\s*([AB])", text)
 
     if result_match:
-        score = int(result_match.group(1))
+        letter = result_match.group(1)
+        score = 0 if letter == "A" else 1
         feedback = text[:result_match.start()].strip()
     else:
         score = None
         feedback = text.strip()
     return feedback, score
+
 
 def get_parser():
     if 'prometheus' in args.model_repo or 'llama' in args.model_repo:
