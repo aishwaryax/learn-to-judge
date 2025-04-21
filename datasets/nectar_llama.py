@@ -51,10 +51,16 @@ def get_llm_prompt(instruction, response1,response2):
         An instruction (might include an Input inside it), a response to evaluate, and a score rubric representing a evaluation criteria are given.
         1. Write a detailed feedback that assess the quality of the response strictly based on the given score rubric, not evaluating in general.
         2. Make comparisons between Response A and Response B. Instead of examining Response A and Response B separately, go straight to the point and mention about the commonalities and differences between them.
+<<<<<<< HEAD
         3. After writing the feedback, indicate the better response, either "A" or "B". You should refer to the score rubric.
         4. The output format should look as follows: "Feedback: (write a feedback) [RESULT] (Either "A" or "B")"
         5. Please do not generate any other opening, closing, and explanations and strictly follow the format.
          
+=======
+        3. After writing the feedback, indicate the better response, either "A" or "B".
+        4. The output format should look as follows: "Feedback: (write a feedback) RESULT: (Either "A" or "B")"
+
+>>>>>>> d253cf0 (Minor changes for Nectar LLama)
         The instruction to evaluate:
         {instruction}
 
@@ -90,15 +96,30 @@ def transform_data(example):
     }
 
 def parse_feedback_and_score_prometheus(text):
+<<<<<<< HEAD
     result_match = re.search(r"RESULT:\s*([AB])", text)
 
     if result_match:
         letter = result_match.group(1)
         score = 0 if letter == "A" else 1
+=======
+    result_match = re.search(r"RESULT:\s*([A-B])", text)
+
+    print("result_match = ", result_match)  
+
+    if result_match:
+        score = result_match.group(1)
+>>>>>>> d253cf0 (Minor changes for Nectar LLama)
         feedback = text[:result_match.start()].strip()
     else:
         score = None
         feedback = text.strip()
+
+    print("feedback = ", feedback)
+    if score in ['A', 'B']:
+        score = 0 if score == 'A' else 1
+    else:
+        score = None
     return feedback, score
 
 

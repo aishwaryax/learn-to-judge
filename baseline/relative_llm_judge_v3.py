@@ -46,7 +46,7 @@ class RelativeLLMJudge:
             writer = csv.writer(file)
             if os.stat(self.output_file).st_size == 0:
                 writer.writerow(["instruction", "response1", "response2", "llm_prompt", "human_score", "llm_critique", "llm_score", "llm_response"])
-
+        print("len(dataset) = ", len(self.dataset))
         for idx, item in enumerate(self.dataset):
             if idx < start_idx:
                 continue
@@ -58,11 +58,11 @@ class RelativeLLMJudge:
             human_score = item["human_score"]
             prompt = item["prompt"]
             llm_response = self._get_judge_llm_resp(prompt)
-            print(llm_response)
             feedback, score = self._parse_feedback_and_score(llm_response)
+            # print("Feedback = ", feedback)
             if score is None:
                 continue
-            print(score)
+           
             results.append([instruction, response1, response2, prompt, human_score, feedback, score, llm_response])
             if len(results) >= batch_size:
                 with open(self.output_file, mode='a+', newline='') as file:        
