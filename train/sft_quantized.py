@@ -68,7 +68,7 @@ def _create_hf_dataset(data_csv, min_score=1, max_score=5):
     data_df['score'] = pd.to_numeric(data_df['human_score'], errors='coerce')
 
     #short dataset for test
-    data_df = data_df.sample(100, random_state=42)
+    # data_df = data_df.sample(100, random_state=42)
 
     def format_prompt(row):
         prompt =  ABSOLUTE_PROMPT_TEMPLATE.format(
