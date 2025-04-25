@@ -14,7 +14,7 @@ from sklearn.metrics import (
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 from scipy.stats import pearsonr, spearmanr, kendalltau
-
+from sklearn.preprocessing import StandardScaler
 
 def set_seed(seed: int = 42) -> None:
     random.seed(seed)
@@ -122,13 +122,10 @@ class DeltaMultinomial:
         log_p_test = self.compute_log_p(test_df)
 
         if self.standardize:
-            mean = X_train.mean(axis=0)
-            std = X_train.std(axis=0)
-            std[std == 0] = 1e-8
-
-            X_train = (X_train - mean) / std
-            X_val = (X_val - mean) / std
-            X_test = (X_test - mean) / std
+            self.scaler = StandardScaler()
+            X_train = self.scaler.fit_transform(X_train)
+            X_val = self.scaler.transform(X_val)
+            X_test = self.scaler.transform(X_test)
         
         
         return map(
