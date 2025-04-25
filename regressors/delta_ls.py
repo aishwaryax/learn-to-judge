@@ -24,11 +24,11 @@ def set_seed(seed: int = 42) -> None:
     os.environ['PYTHONHASHSEED'] = str(seed)
 
 
-class TorchDeltaLS(nn.Module):
-    def __init__(self, input_dim: int, use_external_bias: bool, lambda_l2: float = 0.1):
+class DeltaLSJudge(nn.Module):
+    def __init__(self, input_dim: int, use_external_bias: bool, lambda_theta: float = 0.0):
         super().__init__()
-        self.linear = nn.Linear(input_dim, 1, bias=True)
-        self.lambda_l2 = lambda_l2
+        self.use_external_bias = use_external_bias
+        self.lambda_theta = lambda_theta
         self.theta = nn.Parameter(torch.zeros(input_dim - 1 if use_external_bias else input_dim))
         self.alpha = nn.Parameter(torch.tensor(0.0)) if use_external_bias else None
         self.bias = nn.Parameter(torch.tensor(0.0))
@@ -42,9 +42,9 @@ class TorchDeltaLS(nn.Module):
         return z.squeeze(-1)
 
     def l2_regularization(self) -> torch.Tensor:
-        reg = self.lambda_l2 * torch.sum(self.theta ** 2)
+        reg = self.lambda_theta * torch.sum(self.theta ** 2)
         if self.alpha is not None:
-            reg += self.lambda_l2 * self.alpha ** 2
+            reg += self.lambda_theta * self.alpha ** 2
         return reg
 
 
@@ -52,7 +52,7 @@ class DeltaLS:
     def __init__(self, train_path: str, test_path: str,
                  train_emb_path: str, test_emb_path: str,
                  size: int = -1, use_external_bias: bool = True,
-                 seed: int = 42):
+                 seed: int = 42, standardize: bool = True):
         set_seed(seed)
         self.train_path = train_path
         self.test_path = test_path
@@ -63,22 +63,19 @@ class DeltaLS:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         self.model = None
-        self.best_lambda_l2 = None
+        self.best_lambda_theta = None
         self.epochs = 10000
         self.min_epochs = 200
         self.early_stopping_patience = 10
         self.lr = 1e-3
+        
+        self.standardize = standardize 
 
     def preprocess(self):
         train_df = pd.read_csv(self.train_path).dropna(subset=["human_score"])
         test_df = pd.read_csv(self.test_path).dropna(subset=["human_score"])
         train_df["human_score"] = train_df["human_score"].astype(int)
         test_df["human_score"] = test_df["human_score"].astype(int)
-
-        mean_score = train_df["llm_score"].mean()
-        std_score = train_df["llm_score"].std()
-        train_df["llm_score"] = (train_df["llm_score"] - mean_score) / std_score
-        test_df["llm_score"] = (test_df["llm_score"] - mean_score) / std_score
 
         train_embeddings = np.load(self.train_emb_path)
         test_embeddings = np.load(self.test_emb_path)
@@ -97,33 +94,46 @@ class DeltaLS:
 
         X_train_full, y_train_full = prepare_features(train_df, train_embeddings)
         X_test, y_test = prepare_features(test_df, test_embeddings)
-
+        
         X_train, X_val, y_train, y_val = train_test_split(X_train_full, y_train_full, test_size=0.2, random_state=42)
 
-        return map(torch.tensor, (X_train, X_val, y_train, y_val, X_test, y_test))
+        if self.standardize:
+            mean = X_train.mean(axis=0)
+            std = X_train.std(axis=0)
+            std[std == 0] = 1e-8
 
-    def tune_hyperparameters(self, X_train, X_val, y_train, y_val, lambda_l2_values):
+            X_train = (X_train - mean) / std
+            X_val = (X_val - mean) / std
+            X_test = (X_test - mean) / std
+
+        return map(
+            lambda x, dtype: torch.tensor(x, dtype=dtype, device=self.device),
+            (X_train, X_val, y_train, y_val, X_test, y_test),
+            (torch.float, torch.float, torch.float, torch.float, torch.float, torch.long)
+        )
+
+    def tune_hyperparameters(self, X_train, X_val, y_train, y_val, lambda_values):
         best_loss = float('inf')
         input_dim = X_train.shape[1]
         self.reg_data = {}
 
-        for l2 in lambda_l2_values:
-            model = TorchDeltaLS(input_dim, self.use_external_bias, lambda_l2=l2).to(self.device)
-            model = self.train(X_train, X_val, y_train, y_val, lambda_l2=l2)
+        for lambda_theta in lambda_values:
+            model = DeltaLSJudge(input_dim, self.use_external_bias, lambda_theta=lambda_theta).to(self.device)
+            model = self.train(X_train, X_val, y_train, y_val, lambda_theta=lambda_theta)
             with torch.no_grad():
-                preds = model(X_val.to(self.device))
-                loss = F.mse_loss(preds, y_val.to(self.device)) + model.l2_regularization()
-            self.reg_data[l2] = loss.item()
-            print(f"Validation MSE: {loss:.4f} @ λ₂: {l2}")
+                preds = model(X_val)
+                loss = F.mse_loss(preds, y_val) + model.l2_regularization()
+            self.reg_data[(lambda_theta)] = loss.item()
+            print(f"Validation MSE: {loss:.4f} @ (λ_theta={lambda_theta})")
             if loss < best_loss:
                 best_loss = loss
-                self.best_lambda_l2 = l2
+                self.best_lambda_theta = lambda_theta
                 best_model_state = model.state_dict()
 
-        print(f"Best regularization: λ₂={self.best_lambda_l2} with MSE {best_loss:.4f}")
+        print(f"Best regularization: λ_theta={self.best_lambda_theta} with MSE {best_loss:.4f}")
 
-    def train(self, X_train, X_val, y_train, y_val, lambda_l2=None):
-        model = TorchDeltaLS(X_train.shape[1], self.use_external_bias, lambda_l2=lambda_l2).to(self.device)
+    def train(self, X_train, X_val, y_train, y_val, lambda_theta=None):
+        model = DeltaLSJudge(X_train.shape[1], self.use_external_bias, lambda_theta=lambda_theta).to(self.device)
         optimizer = torch.optim.Adam(model.parameters(), lr=self.lr)
 
         best_loss = float('inf')
@@ -133,8 +143,8 @@ class DeltaLS:
         for epoch in range(self.epochs):
             model.train()
             optimizer.zero_grad()
-            preds = model(X_train.to(self.device))
-            loss = F.mse_loss(preds, y_train.to(self.device)) + model.l2_regularization()
+            preds = model(X_train)
+            loss = F.mse_loss(preds, y_train) + model.l2_regularization()
             loss.backward()
             optimizer.step()
 
@@ -159,9 +169,10 @@ class DeltaLS:
     def predict(self, X: torch.Tensor) -> np.ndarray:
         self.model.eval()
         with torch.no_grad():
-            return self.model(X.to(self.device)).cpu().numpy()
+            return self.model(X).cpu().numpy()
 
     def evaluate(self, X: torch.Tensor, y: torch.Tensor) -> dict:
+        y = y.detach().cpu().numpy()
         y_pred = self.predict(X)
         min_pred, max_pred = y_pred.min(), y_pred.max()
 
@@ -194,9 +205,8 @@ class DeltaLS:
         X_train, X_val, X_test = X_train.float(), X_val.float(), X_test.float()
         y_train, y_val, y_test = y_train.float(), y_val.float(), y_test.float()
 
-        lambda_l2_values = [10.0 ** x for x in range(-5, 6)]
-        self.tune_hyperparameters(X_train, X_val, y_train, y_val, lambda_l2_values)
-        l2 = self.best_lambda_l2
-        self.model = self.train(X_train, X_val, y_train, y_val, lambda_l2=l2)
-
+        lambda_values = [10.0 ** x for x in range(-5, 6)]
+        self.tune_hyperparameters(X_train, X_val, y_train, y_val, lambda_values)
+        self.model = self.train(X_train, X_val, y_train, y_val,
+                                lambda_theta=self.best_lambda_theta)
         return self.evaluate(X_test, y_test)

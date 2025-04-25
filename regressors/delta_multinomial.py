@@ -35,14 +35,21 @@ class MNJudge(nn.Module):
         self.alpha = nn.Parameter(torch.tensor(0.0)) if use_external_bias else None
 
     def forward(self, X: torch.Tensor, log_p: torch.Tensor) -> torch.Tensor:
-        return X @ self.Theta + self.alpha * log_p if self.use_external_bias and self.alpha is not None else X @ self.Theta
+        if self.use_external_bias and self.alpha is not None:
+            return X @ self.Theta + self.alpha * log_p
+        return X @ self.Theta
+
+    def regularization_loss(self, lambda_theta: float) -> torch.Tensor:
+        reg_loss = lambda_theta * torch.sum(self.Theta ** 2)
+        if self.alpha is not None:
+            reg_loss += lambda_theta * (self.alpha ** 2)
+        return reg_loss
 
 
 class DeltaMultinomial:
-    def __init__(self, train_path: str, test_path: str, train_emb_path: str, test_emb_path: str,
-                 size: int = -1, lr: float = 1e-3, epochs: int = 10000,
-                 lambda_l2: float = 0.0, lambda_l1: float = 0.0,
-                 use_external_bias: bool = True, device: torch.device = None, seed: int = 42):
+    def __init__(self, train_path, test_path, train_emb_path, test_emb_path,
+                 size=-1, lr=1e-3, epochs=10000, lambda_theta=0.0,
+                 use_external_bias=True, device=None, seed=42, standardize=True):
         set_seed(seed)
         self.train_path = train_path
         self.test_path = test_path
@@ -51,15 +58,33 @@ class DeltaMultinomial:
         self.size = size
         self.lr = lr
         self.epochs = epochs
-        self.lambda_l2 = lambda_l2
-        self.lambda_l1 = lambda_l1
+        self.lambda_theta = lambda_theta
         self.use_external_bias = use_external_bias
-        self.device = device if device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.label_encoder = LabelEncoder()
         self.min_epochs = 200
         self.model = None
+        self.reg_data = {}
+        self.standardize = standardize 
 
-    def compute_log_p(self, df: pd.DataFrame) -> np.ndarray:
+    def _load_data(self):
+        train_df = pd.read_csv(self.train_path)
+        test_df = pd.read_csv(self.test_path)
+        train_embeddings = np.load(self.train_emb_path)
+        test_embeddings = np.load(self.test_emb_path)
+        return train_df, test_df, train_embeddings, test_embeddings
+
+    def _clean_data(self, df):
+        df.dropna(subset=["human_score", "llm_score"], inplace=True)
+        df["human_score"] = df["human_score"].astype(int)
+        df["llm_score"] = df["llm_score"].astype(int)
+        df["target_probability"] = df["target_probability"].apply(ast.literal_eval)
+
+    def _encode_labels(self, train_df, test_df):
+        all_labels = np.concatenate([train_df["human_score"], test_df["human_score"]])
+        self.label_encoder.fit(all_labels)
+
+    def compute_log_p(self, df):
         label_classes = self.label_encoder.classes_
         reverse_label_dict = {label: idx for idx, label in enumerate(label_classes)}
         log_p_list = []
@@ -72,23 +97,14 @@ class DeltaMultinomial:
             log_p_list.append(np.log(np.clip(p_vec, 1e-8, 1.0 - 1e-8)))
         return np.stack(log_p_list)
 
-    def augment_with_bias(self, X: np.ndarray) -> np.ndarray:
+    def augment_with_bias(self, X):
         return np.hstack([X, np.ones((X.shape[0], 1))])
 
     def preprocess(self):
-        train_df = pd.read_csv(self.train_path)
-        test_df = pd.read_csv(self.test_path)
-        train_embeddings = np.load(self.train_emb_path)
-        test_embeddings = np.load(self.test_emb_path)
-
-        for df in [train_df, test_df]:
-            df.dropna(subset=["human_score", "llm_score"], inplace=True)
-            df["human_score"] = df["human_score"].astype(int)
-            df["llm_score"] = df["llm_score"].astype(int)
-            df["target_probability"] = df["target_probability"].apply(ast.literal_eval)
-
-        all_labels = np.concatenate([train_df["human_score"], test_df["human_score"]])
-        self.label_encoder.fit(all_labels)
+        train_df, test_df, train_embeddings, test_embeddings = self._load_data()
+        self._clean_data(train_df)
+        self._clean_data(test_df)
+        self._encode_labels(train_df, test_df)
 
         if self.size != -1:
             selected_indices = np.random.choice(train_df.index, size=min(self.size, len(train_df)), replace=False)
@@ -105,17 +121,27 @@ class DeltaMultinomial:
         log_p_train, log_p_val = train_test_split(log_p_all_train, test_size=0.2, random_state=42)
         log_p_test = self.compute_log_p(test_df)
 
-        return X_train, X_val, y_train, y_val, X_test, y_test, log_p_train, log_p_val, log_p_test
+        if self.standardize:
+            mean = X_train.mean(axis=0)
+            std = X_train.std(axis=0)
+            std[std == 0] = 1e-8
 
-    def train_model(self, X_train, y_train, log_p_train, X_val=None, y_val=None, log_p_val=None, early_stopping_patience=10):
+            X_train = (X_train - mean) / std
+            X_val = (X_val - mean) / std
+            X_test = (X_test - mean) / std
+        
+        
+        return map(
+            lambda x, dtype: torch.tensor(x, dtype=dtype, device=self.device),
+            (X_train, X_val, y_train, y_val, X_test, y_test, log_p_train, log_p_val, log_p_test),
+            (torch.float, torch.float, torch.long, torch.long, torch.float, torch.long, torch.float, torch.float, torch.float)
+        )
+    def train_model(self, X_train, y_train, log_p_train, X_val=None, y_val=None, log_p_val=None, patience=10):
         num_classes = log_p_train.shape[1]
         input_dim_aug = X_train.shape[1]
 
         self.model = MNJudge(input_dim=input_dim_aug - 1, num_classes=num_classes, use_external_bias=self.use_external_bias).to(self.device)
 
-        X_train_t = torch.tensor(X_train, dtype=torch.float32, device=self.device)
-        y_train_t = torch.tensor(y_train, dtype=torch.long, device=self.device)
-        log_p_train_t = torch.tensor(log_p_train, dtype=torch.float32, device=self.device)
         optimizer = optim.Adam(self.model.parameters(), lr=self.lr)
 
         best_val_loss, best_state_dict = float('inf'), None
@@ -124,12 +150,9 @@ class DeltaMultinomial:
         for epoch in range(self.epochs):
             self.model.train()
             optimizer.zero_grad()
-            logits = self.model(X_train_t, log_p_train_t)
-            loss = F.nll_loss(F.log_softmax(logits, dim=1), y_train_t)
-            if self.lambda_l2 > 0:
-                loss += self.lambda_l2 * (torch.sum(self.model.Theta ** 2) + (self.model.alpha ** 2 if self.model.alpha is not None else 0))
-            if self.lambda_l1 > 0:
-                loss += self.lambda_l1 * (torch.sum(torch.abs(self.model.Theta)) + (torch.abs(self.model.alpha) if self.model.alpha is not None else 0))
+            logits = self.model(X_train, log_p_train)
+            loss = F.cross_entropy(logits, y_train)
+            loss += self.model.regularization_loss(self.lambda_theta)
             loss.backward()
             optimizer.step()
 
@@ -138,61 +161,58 @@ class DeltaMultinomial:
                     continue
                 self.model.eval()
                 with torch.no_grad():
-                    val_loss = F.nll_loss(
-                        F.log_softmax(self.model(
-                            torch.tensor(X_val, dtype=torch.float32, device=self.device),
-                            torch.tensor(log_p_val, dtype=torch.float32, device=self.device)
-                        ), dim=1),
-                        torch.tensor(y_val, dtype=torch.long, device=self.device)
-                    )
+                    val_logits = self.model(X_val, log_p_val)
+                    val_loss = F.cross_entropy(val_logits, y_val)
                 if val_loss.item() < best_val_loss - 1e-4:
                     best_val_loss = val_loss.item()
                     best_state_dict = {k: v.cpu().clone() for k, v in self.model.state_dict().items()}
                     epochs_without_improvement = 0
                 else:
                     epochs_without_improvement += 1
-                    if epochs_without_improvement >= early_stopping_patience:
-                        print(f"Early stopping triggered at epoch {epoch}")
+                    if epochs_without_improvement >= patience:
+                        print(f"Early stopping at epoch {epoch}")
                         if best_state_dict:
                             self.model.load_state_dict(best_state_dict)
                         break
         return self.model
 
-    def tune_hyperparameters(self, X_train, y_train, log_p_train, X_val, y_val, log_p_val, lambda_l2_values, patience=10):
-        best_acc, best_lambda_l2 = 0, self.lambda_l2
-        best_state_dict, self.reg_data = None, {}
-        for l2 in lambda_l2_values:
-            self.lambda_l2 = l2
+    def tune_hyperparameters(self, X_train, y_train, log_p_train, X_val, y_val, log_p_val, lambda_values, patience=10):
+        best_acc = 0
+        best_lambda_theta = self.lambda_theta
+        best_state_dict = None
+
+        for l2_theta in lambda_values:
+            self.lambda_theta = l2_theta
             model = self.train_model(X_train, y_train, log_p_train, X_val, y_val, log_p_val, patience)
             val_preds, _ = self.predict(X_val, log_p_val)
-            val_acc = accuracy_score(y_val, val_preds)
-            self.reg_data[l2] = val_acc
-            print(f"Validation Accuracy: {val_acc:.4f} @ λ₂: {l2}")
+            val_acc = accuracy_score(y_val.cpu().numpy(), val_preds)
+            self.reg_data[(l2_theta)] = val_acc
+            print(f"Val Acc: {val_acc:.4f} @ theta={l2_theta}")
             if val_acc > best_acc:
                 best_acc = val_acc
-                best_lambda_l2 = l2
+                best_lambda_theta = l2_theta
                 best_state_dict = {k: v.cpu().clone() for k, v in model.state_dict().items()}
-        print(f"Best λ₂={best_lambda_l2} with accuracy {best_acc:.4f}")
-        self.lambda_l2 = best_lambda_l2
+
+        print(f"Best lambda_theta={best_lambda_theta} with acc={best_acc:.4f}")
+        self.lambda_theta = best_lambda_theta
         if best_state_dict:
             self.model.load_state_dict(best_state_dict)
 
     def predict(self, X, log_p):
-        X_t = torch.tensor(X, dtype=torch.float32, device=self.device)
-        log_p_t = torch.tensor(log_p, dtype=torch.float32, device=self.device)
         self.model.eval()
         with torch.no_grad():
-            logits = X_t @ self.model.Theta + log_p_t
+            logits = self.model(X, log_p)
             probs = F.softmax(logits, dim=1)
         return np.argmax(probs.cpu().numpy(), axis=1), probs.cpu().numpy()
 
     def evaluate(self, X, y, log_p):
         y_pred, proba = self.predict(X, log_p)
         expected_score = proba[:, 1] if proba.shape[1] == 2 else np.dot(proba, self.label_encoder.inverse_transform(np.arange(proba.shape[1])).astype(float))
+        y = y.cpu().numpy()
         return {
-            "MSE": mean_squared_error(y, y_pred),
-            "MAE": mean_absolute_error(y, y_pred),
-            "R2 Score": r2_score(y, y_pred),
+            "MSE": mean_squared_error(y, expected_score),
+            "MAE": mean_absolute_error(y, expected_score),
+            "R2 Score": r2_score(y, expected_score),
             "Min Prediction": np.min(y_pred),
             "Max Prediction": np.max(y_pred),
             "Accuracy": accuracy_score(y, y_pred),
@@ -208,6 +228,6 @@ class DeltaMultinomial:
 
     def experiment(self):
         X_train, X_val, y_train, y_val, X_test, y_test, log_p_train, log_p_val, log_p_test = self.preprocess()
-        lambda_l2_values = [10.0 ** x for x in range(-5, 6)]
-        self.tune_hyperparameters(X_train, y_train, log_p_train, X_val, y_val, log_p_val, lambda_l2_values)
+        lambda_values = [10.0 ** x for x in range(-5, 6)]
+        self.tune_hyperparameters(X_train, y_train, log_p_train, X_val, y_val, log_p_val, lambda_values)
         return self.evaluate(X_test, y_test, log_p_test)
