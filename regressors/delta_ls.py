@@ -5,8 +5,7 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, TensorDataset
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, KFold
 from sklearn.metrics import (
     mean_squared_error, mean_absolute_error, r2_score,
     accuracy_score, precision_recall_fscore_support, confusion_matrix
@@ -33,6 +32,7 @@ class DeltaLSJudge(nn.Module):
         self.theta = nn.Parameter(torch.zeros(input_dim - 1 if use_external_bias else input_dim))
         self.alpha = nn.Parameter(torch.tensor(0.0)) if use_external_bias else None
         self.bias = nn.Parameter(torch.tensor(0.0))
+        self.double()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.use_external_bias:
@@ -54,6 +54,7 @@ class DeltaLS:
                  train_emb_path: str, test_emb_path: str,
                  size: int = -1, use_external_bias: bool = True,
                  seed: int = 42, standardize: bool = True):
+        self.seed = seed
         set_seed(seed)
         self.train_path = train_path
         self.test_path = test_path
@@ -65,13 +66,14 @@ class DeltaLS:
 
         self.model = None
         self.best_lambda_theta = None
-        self.epochs = 10000
+        self.epochs = 2000
         self.min_epochs = 200
         self.early_stopping_patience = 10
-        self.lr = 1e-3
+        self.standardize = standardize
+        self.lr = 1
+        self.max_iter = 500
+        self.tol = 1e-9
         
-        self.standardize = standardize 
-
     def preprocess(self):
         train_df = pd.read_csv(self.train_path).dropna(subset=["human_score"])
         test_df = pd.read_csv(self.test_path).dropna(subset=["human_score"])
@@ -95,74 +97,76 @@ class DeltaLS:
 
         X_train_full, y_train_full = prepare_features(train_df, train_embeddings)
         X_test, y_test = prepare_features(test_df, test_embeddings)
-        
-        X_train, X_val, y_train, y_val = train_test_split(X_train_full, y_train_full, test_size=0.2, random_state=42)
 
         if self.standardize:
             self.scaler = StandardScaler()
-            X_train = self.scaler.fit_transform(X_train)
-            X_val = self.scaler.transform(X_val)
+            X_train_full = self.scaler.fit_transform(X_train_full)
             X_test = self.scaler.transform(X_test)
 
         return map(
-            lambda x, dtype: torch.tensor(x, dtype=dtype, device=self.device),
-            (X_train, X_val, y_train, y_val, X_test, y_test),
-            (torch.float, torch.float, torch.float, torch.float, torch.float, torch.long)
+            lambda x: torch.tensor(x, dtype=torch.float64, device=self.device),
+            (X_train_full, y_train_full, X_test, y_test)
         )
 
-    def tune_hyperparameters(self, X_train, X_val, y_train, y_val, lambda_values):
+    def tune_hyperparameters(self, X_train, y_train, k_folds=5, lambda_values=None):
         best_loss = float('inf')
         input_dim = X_train.shape[1]
         self.reg_data = {}
 
+        kfold = KFold(n_splits=k_folds, shuffle=True, random_state=self.seed)
+
         for lambda_theta in lambda_values:
-            model = DeltaLSJudge(input_dim, self.use_external_bias, lambda_theta=lambda_theta).to(self.device)
-            model = self.train(X_train, X_val, y_train, y_val, lambda_theta=lambda_theta)
-            with torch.no_grad():
-                preds = model(X_val)
-                loss = F.mse_loss(preds, y_val) + model.l2_regularization()
-            self.reg_data[(lambda_theta)] = loss.item()
-            print(f"Validation MSE: {loss:.4f} @ (λ_theta={lambda_theta})")
-            if loss < best_loss:
-                best_loss = loss
+            fold_losses = []
+            for train_idx, val_idx in kfold.split(X_train):
+                X_tr, X_val = X_train[train_idx], X_train[val_idx]
+                y_tr, y_val = y_train[train_idx], y_train[val_idx]
+
+                model = DeltaLSJudge(input_dim, self.use_external_bias, lambda_theta=lambda_theta).to(self.device)
+                model = self.train(X_tr, y_tr, lambda_theta=lambda_theta, epochs=500)
+                with torch.no_grad():
+                    preds = model(X_val)
+                    loss = F.mse_loss(preds, y_val)
+                fold_losses.append(loss.item())
+
+            avg_loss = np.mean(fold_losses)
+            self.reg_data[lambda_theta] = avg_loss
+            print(f"Average Validation MSE: {avg_loss:.4f} @ (λ_theta={lambda_theta})")
+            if avg_loss < best_loss:
+                best_loss = avg_loss
                 self.best_lambda_theta = lambda_theta
-                best_model_state = model.state_dict()
 
-        print(f"Best regularization: λ_theta={self.best_lambda_theta} with MSE {best_loss:.4f}")
+        print(f"Best regularization: λ_theta={self.best_lambda_theta} with Avg MSE {best_loss:.4f}")
 
-    def train(self, X_train, X_val, y_train, y_val, lambda_theta=None):
+    def train(self, X_train, y_train, lambda_theta=None, epochs=None):
         model = DeltaLSJudge(X_train.shape[1], self.use_external_bias, lambda_theta=lambda_theta).to(self.device)
-        optimizer = torch.optim.Adam(model.parameters(), lr=self.lr)
+        epochs = self.epochs if epochs is None else epochs
+        learning_rate = 1.0 / np.sqrt(epochs)
+        optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
+        batch_size = 128
+        dataset_size = X_train.shape[0]
+        steps_per_epoch = (dataset_size + batch_size - 1) // batch_size
 
-        best_loss = float('inf')
-        best_model_state = None
-        early_stop_counter = 0
+        model.train()
 
-        for epoch in range(self.epochs):
-            model.train()
-            optimizer.zero_grad()
-            preds = model(X_train)
-            loss = F.mse_loss(preds, y_train) + model.l2_regularization()
-            loss.backward()
-            optimizer.step()
+        for epoch in range(epochs):
+            permutation = torch.randperm(dataset_size)
 
-            if epoch < self.min_epochs:
-                continue
+            for step in range(steps_per_epoch):
+                start_idx = step * batch_size
+                end_idx = min((step + 1) * batch_size, dataset_size)
+                indices = permutation[start_idx:end_idx]
 
-            loss_val = loss.item()
-            if loss_val < best_loss - 1e-4:
-                best_loss = loss_val
-                best_model_state = model.state_dict()
-                early_stop_counter = 0
-            else:
-                early_stop_counter += 1
-                if early_stop_counter >= self.early_stopping_patience:
-                    print(f"Early stopping during training at epoch {epoch}")
-                    break
+                X_batch = X_train[indices]
+                y_batch = y_train[indices]
 
-        if best_model_state:
-            model.load_state_dict(best_model_state)
+                optimizer.zero_grad()
+                preds = model(X_batch)
+                loss = F.mse_loss(preds, y_batch) + model.l2_regularization()
+                loss.backward()
+                optimizer.step()
+
         return model
+
 
     def predict(self, X: torch.Tensor) -> np.ndarray:
         self.model.eval()
@@ -179,32 +183,19 @@ class DeltaLS:
             "MAE": mean_absolute_error(y, y_pred),
             "R2 Score": r2_score(y, y_pred),
             "Min Prediction": min_pred,
-            "Max Prediction": max_pred
-        }
-
-        y_true_rounded = np.round(y)
-        y_pred_rounded = np.round(np.clip(y_pred, min_pred, max_pred))
-
-        metrics.update({
-            "Accuracy": accuracy_score(y_true_rounded, y_pred_rounded),
-            "Precision": precision_recall_fscore_support(y_true_rounded, y_pred_rounded, average='weighted', zero_division=0)[0],
-            "Recall": precision_recall_fscore_support(y_true_rounded, y_pred_rounded, average='weighted', zero_division=0)[1],
-            "F1 Score": precision_recall_fscore_support(y_true_rounded, y_pred_rounded, average='weighted', zero_division=0)[2],
-            "Confusion Matrix": confusion_matrix(y_true_rounded, y_pred_rounded),
-            "Class Labels": np.unique(y_true_rounded).astype(int).tolist(),
+            "Max Prediction": max_pred,
             "Pearson r": pearsonr(y, y_pred)[0],
             "Spearman ρ": spearmanr(y, y_pred)[0],
             "Kendall τ": kendalltau(y, y_pred)[0]
-        })
+        }
+
         return metrics
 
     def experiment(self) -> dict:
-        X_train, X_val, y_train, y_val, X_test, y_test = self.preprocess()
-        X_train, X_val, X_test = X_train.float(), X_val.float(), X_test.float()
-        y_train, y_val, y_test = y_train.float(), y_val.float(), y_test.float()
+        X_train_full, y_train_full, X_test, y_test = self.preprocess()
 
         lambda_values = [10.0 ** x for x in range(-5, 6)]
-        self.tune_hyperparameters(X_train, X_val, y_train, y_val, lambda_values)
-        self.model = self.train(X_train, X_val, y_train, y_val,
-                                lambda_theta=self.best_lambda_theta)
+        self.tune_hyperparameters(X_train_full, y_train_full, k_folds=5, lambda_values=lambda_values)
+        self.model = self.train(X_train_full, y_train_full, lambda_theta=self.best_lambda_theta)
+
         return self.evaluate(X_test, y_test)
