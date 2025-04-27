@@ -10,7 +10,7 @@ from sklearn.metrics import (
     mean_squared_error, mean_absolute_error, r2_score,
     accuracy_score, precision_recall_fscore_support, confusion_matrix
 )
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, KFold
 from scipy.stats import pearsonr, spearmanr, kendalltau
 from sklearn.preprocessing import StandardScaler
 
@@ -28,15 +28,14 @@ def set_seed(seed: int = 42) -> None:
 class DeltaBTL2Judge(nn.Module):
     def __init__(self, input_dim: int):
         super().__init__()
-        self.theta = nn.Parameter(torch.zeros(input_dim))
-        self.bias = nn.Parameter(torch.tensor(0.0))
-        self.alpha = nn.Parameter(torch.tensor(0.0))
+        self.Theta = nn.Parameter(torch.zeros(input_dim, dtype=torch.float64))
+        self.bias = nn.Parameter(torch.tensor(0.0, dtype=torch.float32))
 
-    def forward(self, X_diff: torch.Tensor, ext_bias: torch.Tensor) -> torch.Tensor:
-        return torch.sigmoid(X_diff @ self.theta + self.bias + self.alpha * ext_bias)
+    def forward(self, X_diff: torch.Tensor) -> torch.Tensor:
+        return torch.sigmoid(X_diff @ self.Theta + self.bias)
 
     def regularization_loss(self, lambda_theta: float) -> torch.Tensor:
-        return lambda_theta * torch.sum(self.theta ** 2 + self.alpha ** 2)
+        return lambda_theta * torch.sum(self.Theta ** 2)
 
 
 class DeltaBTL2:
@@ -103,101 +102,93 @@ class DeltaBTL2:
         y_test = test_df["human_score"].values
         log_odds_test = self._compute_log_odds(test_df).values
 
-        X_train, X_val, y_train, y_val, log_odds_train, log_odds_val = train_test_split(
-            X_train, y_train, log_odds_train, test_size=0.2, random_state=42)
+        if self.use_external_bias:
+            X_train = np.hstack([X_train, log_odds_train[:, None]])
+            X_test = np.hstack([X_test, log_odds_test[:, None]])
                         
         if self.standardize:
             self.scaler = StandardScaler()
             X_train = self.scaler.fit_transform(X_train)
-            X_val = self.scaler.transform(X_val)
             X_test = self.scaler.transform(X_test)
 
-        X_train = torch.tensor(X_train, dtype=torch.float, device=self.device)
-        y_train = torch.tensor(y_train, dtype=torch.float, device=self.device)
-        log_odds_train = torch.tensor(log_odds_train, dtype=torch.float, device=self.device)
+        X_train = torch.tensor(X_train, dtype=torch.float64, device=self.device)
+        y_train = torch.tensor(y_train, dtype=torch.float64, device=self.device)
 
-        X_val = torch.tensor(X_val, dtype=torch.float, device=self.device)
-        y_val = torch.tensor(y_val, dtype=torch.float, device=self.device)
-        log_odds_val = torch.tensor(log_odds_val, dtype=torch.float, device=self.device)
+        X_test = torch.tensor(X_test, dtype=torch.float64, device=self.device)
+        y_test = torch.tensor(y_test, dtype=torch.float64, device=self.device)
 
-        X_test = torch.tensor(X_test, dtype=torch.float, device=self.device)
-        y_test = torch.tensor(y_test, dtype=torch.float, device=self.device)
-        log_odds_test = torch.tensor(log_odds_test, dtype=torch.float, device=self.device)
-
-        return X_train, y_train, log_odds_train, X_val, y_val, log_odds_val, X_test, y_test, log_odds_test
+        return X_train, y_train, X_test, y_test
 
 
-    def train_model(self, X_train, y_train, log_odds_train, X_val=None, y_val=None, log_odds_val=None):
-        self.model = DeltaBTL2Judge(X_train.shape[1]).to(self.device)
-        optimizer = optim.Adam(self.model.parameters(), lr=self.lr)
+    def train(self, X_train, y_train, lambda_theta=None, n_steps=10000, batch_size=512):
+        model = DeltaBTL2Judge(input_dim=X_train.shape[1]).to(self.device)
+        learning_rate = 1.0 / np.sqrt(n_steps)
+        optimizer = optim.SGD(model.parameters(), lr=learning_rate)
 
-        best_val_loss, best_state_dict = float('inf'), None
-        epochs_without_improvement = 0
+        model.train()
+        dataset_size = X_train.shape[0]
 
-        for epoch in range(self.epochs):
-            self.model.train()
+        for step in range(n_steps):
+            indices = torch.randint(0, dataset_size, (batch_size,), device=self.device)
+            X_batch = X_train[indices]
+            y_batch = y_train[indices]
+
             optimizer.zero_grad()
-            preds = self.model(X_train, log_odds_train).squeeze()
-            loss = F.binary_cross_entropy(preds, y_train)
-            loss += self.model.regularization_loss(self.lambda_theta)
+            preds = model(X_batch).squeeze()
+            loss = F.binary_cross_entropy(preds, y_batch)
+            loss += model.regularization_loss(lambda_theta if lambda_theta is not None else self.lambda_theta)
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
 
-            if X_val is not None and y_val is not None and log_odds_val is not None:
-                if epoch < self.min_epochs:
-                    continue
-                self.model.eval()
-                with torch.no_grad():
-                    val_preds = self.model(X_val, log_odds_val).squeeze()
-                    val_loss = F.binary_cross_entropy(val_preds, y_val)
-                    val_loss += self.model.regularization_loss(self.lambda_theta)
-                if val_loss.item() < best_val_loss - 1e-4:
-                    best_val_loss = val_loss.item()
-                    best_state_dict = {k: v.cpu().clone() for k, v in self.model.state_dict().items()}
-                    epochs_without_improvement = 0
-                else:
-                    epochs_without_improvement += 1
-                    if epochs_without_improvement >= self.early_stopping_patience:
-                        print(f"Early stopping at epoch {epoch}.")
-                        break
+        self.model = model
+        return model
 
-        if best_state_dict:
-            self.model.load_state_dict(best_state_dict)
-        return self.model
 
-    def tune_hyperparameters(self, X_train, y_train, log_odds_train, X_val, y_val, log_odds_val, lambda_values):
-        best_acc, best_lambda_theta, best_state_dict = 0, None, None
+    def tune_hyperparameters(self, X_train, y_train, lambda_values=None, k_folds=5):
+        best_acc = -float('inf')
+        best_lambda_theta = None
+        best_state_dict = None
         self.reg_data = {}
 
+        kfold = KFold(n_splits=k_folds, shuffle=True, random_state=self.seed)
+
         for lambda_theta in lambda_values:
-            self.lambda_theta = lambda_theta
-            self.train_model(X_train, y_train, log_odds_train, X_val, y_val, log_odds_val)
+            fold_accuracies = []
 
-            self.model.eval()
-            with torch.no_grad():
-                preds = self.model(X_val, log_odds_val).cpu().numpy()
-                y_pred = (preds > 0.5).astype(int)
-                val_acc = accuracy_score(y_val.cpu().numpy(), y_pred)
+            for train_idx, val_idx in kfold.split(X_train):
+                X_tr, X_val = X_train[train_idx], X_train[val_idx]
+                y_tr, y_val = y_train[train_idx], y_train[val_idx]
 
-            self.reg_data[(lambda_theta)] = val_acc
-            print(f"Validation Accuracy: {val_acc:.4f} @ (λ_theta={lambda_theta})")
-            if val_acc > best_acc:
-                best_acc, best_lambda_theta = val_acc, lambda_theta
-                best_state_dict = {k: v.cpu().clone() for k, v in self.model.state_dict().items()}
+                model = self.train(X_tr, y_tr, lambda_theta=lambda_theta)
 
-        print(f"Best λ_theta={best_lambda_theta} with validation accuracy {best_acc:.4f}")
+                model.eval()
+                with torch.no_grad():
+                    preds = model(X_val).squeeze()
+                    preds = (preds > 0.5).cpu().numpy().astype(int)
+                    acc = accuracy_score(y_val.cpu().numpy(), preds)
+                    fold_accuracies.append(acc)
+
+            avg_acc = np.mean(fold_accuracies)
+            self.reg_data[lambda_theta] = avg_acc
+            print(f"Avg Validation Accuracy: {avg_acc:.4f} @ (λ_theta={lambda_theta})")
+
+            if avg_acc > best_acc:
+                best_acc = avg_acc
+                best_lambda_theta = lambda_theta
+
+        print(f"Best λ_theta={best_lambda_theta} with avg validation accuracy {best_acc:.4f}")
         self.lambda_theta = best_lambda_theta
-        if best_state_dict:
-            self.model.load_state_dict(best_state_dict)
+
             
-    def predict(self, X, log_odds):
+    def predict(self, X):
         self.model.eval()
         with torch.no_grad():
-            probs = self.model(X, log_odds).squeeze()
+            probs = self.model(X).squeeze()
         return (probs > 0.5).cpu().numpy().astype(int), probs.cpu().numpy()
 
-    def evaluate(self, X_test, y_test, log_odds_test):
-        y_pred, probs = self.predict(X_test, log_odds_test)
+    def evaluate(self, X_test, y_test):
+        y_pred, probs = self.predict(X_test)
         y_test = y_test.cpu().numpy()
         return {
             "MSE": mean_squared_error(y_test, probs),
@@ -217,8 +208,8 @@ class DeltaBTL2:
         }
 
     def experiment(self):
-        X_train, y_train, log_odds_train, X_val, y_val, log_odds_val, X_test, y_test, log_odds_test = self.preprocess()
+        X_train, y_train, X_test, y_test = self.preprocess()
         lambda_values = [10.0 ** x for x in range(-5, 6)]
-        self.tune_hyperparameters(X_train, y_train, log_odds_train, X_val, y_val, log_odds_val, lambda_values)
-        self.train_model(X_train, y_train, log_odds_train, X_val, y_val, log_odds_val)
-        return self.evaluate(X_test, y_test, log_odds_test)
+        self.tune_hyperparameters(X_train, y_train, lambda_values)
+        self.train(X_train, y_train)
+        return self.evaluate(X_test, y_test)

@@ -1,10 +1,12 @@
 import os
 import random
+import ast
 import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.optim as optim
 from sklearn.model_selection import train_test_split, KFold
 from sklearn.metrics import (
     mean_squared_error, mean_absolute_error, r2_score,
@@ -25,28 +27,18 @@ def set_seed(seed: int = 42) -> None:
 
 
 class DeltaLSJudge(nn.Module):
-    def __init__(self, input_dim: int, use_external_bias: bool, lambda_theta: float = 0.0):
+    def __init__(self, input_dim: int, lambda_theta: float = 0.0):
         super().__init__()
-        self.use_external_bias = use_external_bias
         self.lambda_theta = lambda_theta
-        self.theta = nn.Parameter(torch.zeros(input_dim - 1 if use_external_bias else input_dim))
-        self.alpha = nn.Parameter(torch.tensor(0.0)) if use_external_bias else None
-        self.bias = nn.Parameter(torch.tensor(0.0))
-        self.double()
+        self.Theta = nn.Parameter(torch.zeros(input_dim, dtype=torch.float32))
+        self.bias = nn.Parameter(torch.tensor(0.0, dtype=torch.float32))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if self.use_external_bias:
-            emb, ext = x[:, :-1], x[:, -1]
-            z = emb @ self.theta + self.alpha * ext + self.bias
-        else:
-            z = x @ self.theta + self.bias
-        return z.squeeze(-1)
+        z = x @ self.Theta + self.bias
+        return z.view(-1)
 
     def l2_regularization(self) -> torch.Tensor:
-        reg = self.lambda_theta * torch.sum(self.theta ** 2)
-        if self.alpha is not None:
-            reg += self.lambda_theta * self.alpha ** 2
-        return reg
+        return self.lambda_theta * torch.sum(self.Theta ** 2)
 
 
 class DeltaLS:
@@ -66,19 +58,26 @@ class DeltaLS:
 
         self.model = None
         self.best_lambda_theta = None
-        self.epochs = 2000
+        self.epochs = 10000
         self.min_epochs = 200
         self.early_stopping_patience = 10
         self.standardize = standardize
         self.lr = 1
-        self.max_iter = 500
+        self.max_iter = 10000
         self.tol = 1e-9
         
+    def _clean_data(self, df):
+        df.dropna(subset=["human_score", "llm_score"], inplace=True)
+        df["human_score"] = df["human_score"].astype(int)
+        df["llm_score"] = df["llm_score"].astype(int)
+        df["target_probability"] = df["target_probability"].apply(ast.literal_eval)
+
     def preprocess(self):
-        train_df = pd.read_csv(self.train_path).dropna(subset=["human_score"])
-        test_df = pd.read_csv(self.test_path).dropna(subset=["human_score"])
-        train_df["human_score"] = train_df["human_score"].astype(int)
-        test_df["human_score"] = test_df["human_score"].astype(int)
+        train_df = pd.read_csv(self.train_path)
+        test_df = pd.read_csv(self.test_path)
+
+        self._clean_data(train_df)
+        self._clean_data(test_df)
 
         train_embeddings = np.load(self.train_emb_path)
         test_embeddings = np.load(self.test_emb_path)
@@ -95,17 +94,17 @@ class DeltaLS:
             y = df["human_score"].values
             return X, y
 
-        X_train_full, y_train_full = prepare_features(train_df, train_embeddings)
+        X_train, y_train = prepare_features(train_df, train_embeddings)
         X_test, y_test = prepare_features(test_df, test_embeddings)
 
         if self.standardize:
             self.scaler = StandardScaler()
-            X_train_full = self.scaler.fit_transform(X_train_full)
+            X_train = self.scaler.fit_transform(X_train)
             X_test = self.scaler.transform(X_test)
 
         return map(
-            lambda x: torch.tensor(x, dtype=torch.float64, device=self.device),
-            (X_train_full, y_train_full, X_test, y_test)
+            lambda x: torch.tensor(x, dtype=torch.float32, device=self.device),
+            (X_train, y_train, X_test, y_test)
         )
 
     def tune_hyperparameters(self, X_train, y_train, k_folds=5, lambda_values=None):
@@ -121,11 +120,11 @@ class DeltaLS:
                 X_tr, X_val = X_train[train_idx], X_train[val_idx]
                 y_tr, y_val = y_train[train_idx], y_train[val_idx]
 
-                model = DeltaLSJudge(input_dim, self.use_external_bias, lambda_theta=lambda_theta).to(self.device)
-                model = self.train(X_tr, y_tr, lambda_theta=lambda_theta, epochs=500)
+                model = self.train(X_tr, y_tr, lambda_theta=lambda_theta)
+                model.eval()
                 with torch.no_grad():
                     preds = model(X_val)
-                    loss = F.mse_loss(preds, y_val)
+                    loss = F.mse_loss(preds, y_val) + model.l2_regularization()
                 fold_losses.append(loss.item())
 
             avg_loss = np.mean(fold_losses)
@@ -137,65 +136,65 @@ class DeltaLS:
 
         print(f"Best regularization: λ_theta={self.best_lambda_theta} with Avg MSE {best_loss:.4f}")
 
-    def train(self, X_train, y_train, lambda_theta=None, epochs=None):
-        model = DeltaLSJudge(X_train.shape[1], self.use_external_bias, lambda_theta=lambda_theta).to(self.device)
-        epochs = self.epochs if epochs is None else epochs
-        learning_rate = 1.0 / np.sqrt(epochs)
-        optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
-        batch_size = 128
-        dataset_size = X_train.shape[0]
-        steps_per_epoch = (dataset_size + batch_size - 1) // batch_size
+    def train(self, X_train, y_train, lambda_theta=None, n_steps=10000, batch_size=512):
+        model = DeltaLSJudge(X_train.shape[1], lambda_theta=lambda_theta).to(self.device)
+        learning_rate = 1.0 / np.sqrt(n_steps)
+        optimizer = optim.SGD(model.parameters(), lr=learning_rate)
 
         model.train()
+        dataset_size = X_train.shape[0]
 
-        for epoch in range(epochs):
-            permutation = torch.randperm(dataset_size)
+        for step in range(n_steps):
+            indices = torch.randint(0, dataset_size, (batch_size,), device=self.device)
+            X_batch = X_train[indices]
+            y_batch = y_train[indices]
 
-            for step in range(steps_per_epoch):
-                start_idx = step * batch_size
-                end_idx = min((step + 1) * batch_size, dataset_size)
-                indices = permutation[start_idx:end_idx]
-
-                X_batch = X_train[indices]
-                y_batch = y_train[indices]
-
-                optimizer.zero_grad()
-                preds = model(X_batch)
-                loss = F.mse_loss(preds, y_batch) + model.l2_regularization()
-                loss.backward()
-                optimizer.step()
+            optimizer.zero_grad()
+            preds = model(X_batch).squeeze()
+            loss = F.mse_loss(preds, y_batch) + model.l2_regularization()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            optimizer.step()
 
         return model
-
 
     def predict(self, X: torch.Tensor) -> np.ndarray:
         self.model.eval()
         with torch.no_grad():
             return self.model(X).cpu().numpy()
 
-    def evaluate(self, X: torch.Tensor, y: torch.Tensor) -> dict:
-        y = y.detach().cpu().numpy()
+    def evaluate(self, X, y):
         y_pred = self.predict(X)
-        min_pred, max_pred = y_pred.min(), y_pred.max()
+        expected_score = y_pred
+        if hasattr(y, "cpu"):
+            y = y.cpu().numpy()
+        if np.issubdtype(y.dtype, np.floating):
+            y_rounded = np.round(y).astype(int)
+        else:
+            y_rounded = y.astype(int)
 
-        metrics = {
+        y_pred_rounded = np.round(y_pred).astype(int)
+        return {
             "MSE": mean_squared_error(y, y_pred),
             "MAE": mean_absolute_error(y, y_pred),
             "R2 Score": r2_score(y, y_pred),
-            "Min Prediction": min_pred,
-            "Max Prediction": max_pred,
+            "Min Prediction": np.min(y_pred),
+            "Max Prediction": np.max(y_pred),
+            "Accuracy": accuracy_score(y_rounded, y_pred_rounded),
+            "Precision": precision_recall_fscore_support(y_rounded, y_pred_rounded, average="weighted", zero_division=1)[0],
+            "Recall": precision_recall_fscore_support(y_rounded, y_pred_rounded, average="weighted", zero_division=1)[1],
+            "F1 Score": precision_recall_fscore_support(y_rounded, y_pred_rounded, average="weighted", zero_division=1)[2],
+            "Confusion Matrix": confusion_matrix(y_rounded, y_pred_rounded, labels=np.arange(y_rounded.max() + 1)),
+            "Class Labels": list(range(y_rounded.max() + 1)),
             "Pearson r": pearsonr(y, y_pred)[0],
             "Spearman ρ": spearmanr(y, y_pred)[0],
-            "Kendall τ": kendalltau(y, y_pred)[0]
+            "Kendall τ": kendalltau(y, y_pred)[0],
         }
 
-        return metrics
 
     def experiment(self) -> dict:
-        X_train_full, y_train_full, X_test, y_test = self.preprocess()
-
+        X_train, y_train, X_test, y_test = self.preprocess()
         lambda_values = [10.0 ** x for x in range(-5, 6)]
-        self.tune_hyperparameters(X_train_full, y_train_full, k_folds=5, lambda_values=lambda_values)
-        self.model = self.train(X_train_full, y_train_full, lambda_theta=self.best_lambda_theta)
-
+        self.tune_hyperparameters(X_train, y_train, k_folds=5, lambda_values=lambda_values)
+        self.model = self.train(X_train, y_train, lambda_theta=self.best_lambda_theta)
         return self.evaluate(X_test, y_test)

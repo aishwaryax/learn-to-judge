@@ -30,8 +30,8 @@ def set_seed(seed: int = 42) -> None:
 class MNJudge(nn.Module):
     def __init__(self, input_dim: int, num_classes: int):
         super().__init__()
-        self.Theta = nn.Parameter(torch.zeros(input_dim, num_classes))
-        self.bias = nn.Parameter(torch.tensor(0.0, dtype=torch.float64))
+        self.Theta = nn.Parameter(torch.zeros(input_dim, num_classes, dtype=torch.float64))
+        self.bias = nn.Parameter(torch.zeros(num_classes, dtype=torch.float64)) 
 
     def forward(self, X: torch.Tensor) -> torch.Tensor:
         return X @ self.Theta + self.bias
@@ -42,8 +42,8 @@ class MNJudge(nn.Module):
 
 class DeltaMultinomial:
     def __init__(self, train_path, test_path, train_emb_path, test_emb_path,
-                 size=-1, lr=1, epochs=2000, lambda_theta=0.0,
-                 device=None, seed=42, standardize=True):
+                 size=-1, lr=1, epochs=10000, lambda_theta=0.0,
+                 device=None, seed=42, standardize=True, use_external_bias=True):
         set_seed(seed)
         self.train_path = train_path
         self.test_path = test_path
@@ -59,6 +59,7 @@ class DeltaMultinomial:
         self.reg_data = {}
         self.standardize = standardize
         self.scaler = None
+        self.use_external_bias = use_external_bias
 
     def _load_data(self):
         train_df = pd.read_csv(self.train_path)
@@ -100,66 +101,55 @@ class DeltaMultinomial:
             selected_indices = np.random.choice(train_df.index, size=min(self.size, len(train_df)), replace=False)
             train_df = train_df.loc[selected_indices].reset_index(drop=True)
 
-        X = train_embeddings[train_df["embedding_index_critique"].values]
+        X_train = train_embeddings[train_df["embedding_index_critique"].values]
         y_train = self.label_encoder.transform(train_df["human_score"])
-        X_train, X_val, y_train, y_val = train_test_split(X, y_train, test_size=0.2, random_state=42)
 
         X_test = test_embeddings[test_df["embedding_index_critique"].values]
         y_test = self.label_encoder.transform(test_df["human_score"])
 
-        log_p_all_train = self.compute_log_p(train_df)
-        log_p_train, log_p_val = train_test_split(log_p_all_train, test_size=0.2, random_state=42)
+        log_p_train = self.compute_log_p(train_df)
         log_p_test = self.compute_log_p(test_df)
 
-        X_train = np.hstack([X_train, log_p_train])
-        X_val = np.hstack([X_val, log_p_val])
-        X_test = np.hstack([X_test, log_p_test])
+        if self.use_external_bias:
+            X_train = np.hstack([X_train, log_p_train])
+            X_test = np.hstack([X_test, log_p_test])
 
         if self.standardize:
             self.scaler = StandardScaler()
             X_train = self.scaler.fit_transform(X_train)
-            X_val = self.scaler.transform(X_val)
             X_test = self.scaler.transform(X_test)
 
         return map(
             lambda x, dtype: torch.tensor(x, dtype=dtype, device=self.device),
-            (X_train, X_val, y_train, y_val, X_test, y_test),
-            (torch.float, torch.float, torch.long, torch.long, torch.float, torch.long)
+            (X_train, y_train, X_test, y_test),
+            (torch.float64, torch.long, torch.float64, torch.long)
         )
 
-    def train_model(self, X_train, y_train, epochs=None):
+    def train(self, X_train, y_train, lambda_theta=None, n_steps=10000, batch_size=512):
         num_classes = len(self.label_encoder.classes_)
         input_dim = X_train.shape[1]
         self.model = MNJudge(input_dim=input_dim, num_classes=num_classes).to(self.device)
 
-        epochs = self.epochs if epochs is None else epochs
-        learning_rate = 1.0 / np.sqrt(epochs)
+        learning_rate = 1.0 / np.sqrt(n_steps)
         optimizer = optim.SGD(self.model.parameters(), lr=learning_rate)
-        batch_size = 128
-        dataset_size = X_train.shape[0]
 
         self.model.train()
-        steps_per_epoch = (dataset_size + batch_size - 1) // batch_size
+        dataset_size = X_train.shape[0]
 
-        for epoch in range(epochs):
-            permutation = torch.randperm(dataset_size)
+        for step in range(n_steps):
+            indices = torch.randint(0, dataset_size, (batch_size,), device=self.device)
+            X_batch = X_train[indices]
+            y_batch = y_train[indices]
 
-            for step in range(steps_per_epoch):
-                start_idx = step * batch_size
-                end_idx = min((step + 1) * batch_size, dataset_size)
-                indices = permutation[start_idx:end_idx]
-
-                X_batch = X_train[indices]
-                y_batch = y_train[indices]
-
-                optimizer.zero_grad()
-                logits = self.model(X_batch)
-                loss = F.cross_entropy(logits, y_batch)
-                loss += self.model.regularization_loss(self.lambda_theta)
-                loss.backward()
-                optimizer.step()
-
+            optimizer.zero_grad()
+            logits = self.model(X_batch)
+            loss = F.cross_entropy(logits, y_batch)
+            loss += self.model.regularization_loss(lambda_theta)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+            optimizer.step()
         return self.model
+
 
     def tune_hyperparameters(self, X_train, y_train, k_folds=5, lambda_values=None):
         best_val_acc = -float('inf')
@@ -174,8 +164,7 @@ class DeltaMultinomial:
                 X_tr, X_val = X_train[train_idx], X_train[val_idx]
                 y_tr, y_val = y_train[train_idx], y_train[val_idx]
 
-                self.lambda_theta = l2_theta
-                model = self.train_model(X_tr, y_tr, epochs=500)
+                model = self.train(X_tr, y_tr, lambda_theta=l2_theta)
 
                 self.model.eval()
                 with torch.no_grad():
@@ -226,10 +215,8 @@ class DeltaMultinomial:
         }
 
     def experiment(self):
-        X_train, X_val, y_train, y_val, X_test, y_test = self.preprocess()
+        X_train, y_train, X_test, y_test = self.preprocess()
         lambda_values = [10.0 ** x for x in range(-5, 6)]
         self.tune_hyperparameters(X_train, y_train, k_folds=5, lambda_values=lambda_values)
-        X_full = torch.cat([X_train, X_val], dim=0)
-        y_full = torch.cat([y_train, y_val], dim=0)
-        self.train_model(X_full, y_full)
+        self.train(X_train, y_train, lambda_theta=self.lambda_theta)
         return self.evaluate(X_test, y_test)
