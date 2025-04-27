@@ -42,7 +42,7 @@ class DeltaBTL2:
     def __init__(self, train_path: str, test_path: str,
                  emb1_path_train: str, emb2_path_train: str,
                  emb1_path_test: str, emb2_path_test: str,
-                 size: int = -1, lr: float = 1e-3, epochs: int = 10000,
+                 size: int = 100, lr: float = 1e-3, epochs: int = 10000,
                  lambda_theta: float = 0.0, early_stopping_patience: int = 10,
                  use_external_bias: bool = True, device: torch.device = None,
                  seed: int = 42, standardize: bool = True):
@@ -79,8 +79,6 @@ class DeltaBTL2:
         df.dropna(subset=["human_score", "llm_score1", "llm_score2",
                          "embedding_index_critique1", "embedding_index_critique2"], inplace=True)
         df["human_score"] = df["human_score"].astype(int)
-        if self.size != -1:
-            df = df.sample(n=min(self.size, len(df)), random_state=42).reset_index(drop=True)
         return df
 
     def _compute_log_odds(self, df):
@@ -93,7 +91,9 @@ class DeltaBTL2:
         train_df, test_df, emb_train1, emb_train2, emb_test1, emb_test2 = self._load_data()
         train_df = self._filter_and_sample(train_df, emb_train1, emb_train2)
         test_df = self._filter_and_sample(test_df, emb_test1, emb_test2)
-
+        if self.size != 100:
+            n = min(int(len(train_df) * self.size/100), len(train_df))
+            train_df = train_df.sample(n=n, random_state=42).reset_index(drop=True)
         X_train = emb_train1[train_df["embedding_index_critique1"]] - emb_train2[train_df["embedding_index_critique2"]]
         y_train = train_df["human_score"].values
         log_odds_train = self._compute_log_odds(train_df).values

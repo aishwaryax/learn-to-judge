@@ -44,7 +44,7 @@ class DeltaLSJudge(nn.Module):
 class DeltaLS:
     def __init__(self, train_path: str, test_path: str,
                  train_emb_path: str, test_emb_path: str,
-                 size: int = -1, use_external_bias: bool = True,
+                 size: int = 100, use_external_bias: bool = True,
                  seed: int = 42, standardize: bool = True):
         self.seed = seed
         set_seed(seed)
@@ -82,8 +82,9 @@ class DeltaLS:
         train_embeddings = np.load(self.train_emb_path)
         test_embeddings = np.load(self.test_emb_path)
 
-        if self.size != -1:
-            selected_indices = np.random.choice(train_df.index, size=min(self.size, len(train_df)), replace=False)
+        if self.size != 100:
+            n = min(int(len(train_df) * self.size/100), len(train_df))
+            selected_indices = np.random.choice(train_df.index, size=n, replace=False)
             train_df = train_df.loc[selected_indices].reset_index(drop=True)
 
         def prepare_features(df, embeddings):
