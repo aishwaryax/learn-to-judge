@@ -45,7 +45,7 @@ class DeltaLS:
     def __init__(self, train_path: str, test_path: str,
                  train_emb_path: str, test_emb_path: str,
                  size: int = 100, use_external_bias: bool = True,
-                 seed: int = 42, standardize: bool = True):
+                 seed: int = 42, standardize: bool = True, is_percent: bool = True):
         self.seed = seed
         set_seed(seed)
         self.train_path = train_path
@@ -65,6 +65,7 @@ class DeltaLS:
         self.lr = 1
         self.max_iter = 10000
         self.tol = 1e-9
+        self.is_percent = is_percent
         
     def _clean_data(self, df):
         df.dropna(subset=["human_score", "llm_score"], inplace=True)
@@ -82,8 +83,11 @@ class DeltaLS:
         train_embeddings = np.load(self.train_emb_path)
         test_embeddings = np.load(self.test_emb_path)
 
-        if self.size != 100:
-            n = min(int(len(train_df) * self.size/100), len(train_df))
+        if not self.is_percent or (self.is_percent and self.size != 100):
+            if self.is_percent:
+                n = min(int(len(train_df) * self.size/100), len(train_df))
+            else:
+                n = self.size
             selected_indices = np.random.choice(train_df.index, size=n, replace=False)
             train_df = train_df.loc[selected_indices].reset_index(drop=True)
 

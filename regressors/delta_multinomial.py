@@ -43,7 +43,8 @@ class MNJudge(nn.Module):
 class DeltaMultinomial:
     def __init__(self, train_path, test_path, train_emb_path, test_emb_path,
                  size=100, lr=1, epochs=10000, lambda_theta=0.0,
-                 device=None, seed=42, standardize=True, use_external_bias=True):
+                 device=None, seed=42, standardize=True, use_external_bias=True,
+                 is_percent=True):
         set_seed(seed)
         self.train_path = train_path
         self.test_path = test_path
@@ -60,6 +61,7 @@ class DeltaMultinomial:
         self.standardize = standardize
         self.scaler = None
         self.use_external_bias = use_external_bias
+        self.is_percent = is_percent
 
     def _load_data(self):
         train_df = pd.read_csv(self.train_path)
@@ -97,8 +99,11 @@ class DeltaMultinomial:
         self._clean_data(test_df)
         self._encode_labels(train_df, test_df)
 
-        if self.size != 100:
-            n = min(int(len(train_df) * self.size/100), len(train_df))
+        if not self.is_percent or (self.is_percent and self.size != 100):
+            if self.is_percent:
+                n = min(int(len(train_df) * self.size/100), len(train_df))
+            else:
+                n = self.size
             selected_indices = np.random.choice(train_df.index, size=n, replace=False)
             train_df = train_df.loc[selected_indices].reset_index(drop=True)
 

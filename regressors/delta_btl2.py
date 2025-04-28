@@ -45,7 +45,7 @@ class DeltaBTL2:
                  size: int = 100, lr: float = 1e-3, epochs: int = 10000,
                  lambda_theta: float = 0.0, early_stopping_patience: int = 10,
                  use_external_bias: bool = True, device: torch.device = None,
-                 seed: int = 42, standardize: bool = True):
+                 seed: int = 42, standardize: bool = True, is_percent: bool=True):
         set_seed(seed)
         self.seed = seed
         self.train_path = train_path
@@ -65,6 +65,7 @@ class DeltaBTL2:
         self.model = None
         self.reg_data = {}
         self.standardize = standardize 
+        self.is_percent = is_percent
 
     def _load_data(self):
         train_df = pd.read_csv(self.train_path)
@@ -91,8 +92,11 @@ class DeltaBTL2:
         train_df, test_df, emb_train1, emb_train2, emb_test1, emb_test2 = self._load_data()
         train_df = self._filter_and_sample(train_df, emb_train1, emb_train2)
         test_df = self._filter_and_sample(test_df, emb_test1, emb_test2)
-        if self.size != 100:
-            n = min(int(len(train_df) * self.size/100), len(train_df))
+        if not self.is_percent or (self.is_percent and self.size != 100):
+            if self.is_percent:
+                n = min(int(len(train_df) * self.size/100), len(train_df))
+            else:
+                n = self.size
             train_df = train_df.sample(n=n, random_state=42).reset_index(drop=True)
         X_train = emb_train1[train_df["embedding_index_critique1"]] - emb_train2[train_df["embedding_index_critique2"]]
         y_train = train_df["human_score"].values
@@ -164,9 +168,9 @@ class DeltaBTL2:
 
                 model.eval()
                 with torch.no_grad():
-                    preds = model(X_val).squeeze()
+                    preds = model(X_val).view(-1)
                     preds = (preds > 0.5).cpu().numpy().astype(int)
-                    acc = accuracy_score(y_val.cpu().numpy(), preds)
+                    acc = accuracy_score(y_val.view(-1).cpu().numpy(), preds)
                     fold_accuracies.append(acc)
 
             avg_acc = np.mean(fold_accuracies)
