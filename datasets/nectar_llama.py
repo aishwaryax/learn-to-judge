@@ -52,7 +52,7 @@ def get_llm_prompt(instruction, response1,response2):
         1. Write a detailed feedback that assess the quality of the response strictly based on the given score rubric, not evaluating in general.
         2. Make comparisons between Response A and Response B. Instead of examining Response A and Response B separately, go straight to the point and mention about the commonalities and differences between them.
         3. After writing the feedback, indicate the better response, either "A" or "B". You should refer to the score rubric.
-        4. The output format should look as follows: "Feedback: (write a feedback) [RESULT] (Either "A" or "B")"
+        4. The output format should look as follows: "Feedback: (write a feedback) RESULT: (Either "A" or "B")"
         5. Please do not generate any other opening, closing, and explanations and strictly follow the format.
          
         The instruction to evaluate:
@@ -72,8 +72,6 @@ def get_llm_prompt(instruction, response1,response2):
         return tokenizer.apply_chat_template(messages, tokenize=False)  
 
 
-
-
 def transform_data(example):
     instruction = instruction_text.format(example["prompt"])
     response1 = example["response1"]
@@ -90,11 +88,10 @@ def transform_data(example):
     }
 
 def parse_feedback_and_score_prometheus(text):
-    result_match = re.search(r"RESULT:\s*([AB])", text)
+    result_match = re.search(r"RESULT:\s*([A-Za-z])", text)
 
     if result_match:
-        letter = result_match.group(1)
-        score = 0 if letter == "A" else 1
+        score = result_match.group(1).upper()  
         feedback = text[:result_match.start()].strip()
     else:
         score = None

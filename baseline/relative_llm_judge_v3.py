@@ -60,9 +60,9 @@ class RelativeLLMJudge:
             llm_response = self._get_judge_llm_resp(prompt)
             print(llm_response)
             feedback, score = self._parse_feedback_and_score(llm_response)
-            if score is None:
-                continue
-            print(score)
+            # if score is None:
+            #     continue
+            # print(score)
             results.append([instruction, response1, response2, prompt, human_score, feedback, score, llm_response])
             if len(results) >= batch_size:
                 with open(self.output_file, mode='a+', newline='') as file:        

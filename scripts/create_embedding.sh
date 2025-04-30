@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -c 4  # Number of Cores per Task
 #SBATCH --mem=40G  # Requested Memory
-#SBATCH -p gpu,superpod-a100 # Partition
+#SBATCH -p gpu-preempt # Partition
 #SBATCH -G 1  # Number of GPUs
 #SBATCH -t 2-00:00:00  # Job time limit
 #SBATCH -o ./jobs-exp/%j.out  # %j = job ID
@@ -24,7 +24,7 @@ output_prefix="$3"
 batch_size="$4"
 dataset_type="$5"
 
-python utils/create_embedding.py \
+python utils/create_embedding_llama.py \
       --model_repo "$model_repo" \
       --input_file "$input_file" \
       --output_prefix "$output_prefix" \
