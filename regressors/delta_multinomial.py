@@ -1,19 +1,22 @@
+import os
+import ast
+import random
 import numpy as np
 import pandas as pd
-import ast
-from sklearn.metrics import accuracy_score, mean_squared_error, mean_absolute_error, precision_recall_fscore_support, confusion_matrix
-from sklearn.metrics import r2_score
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder
 import torch
 import torch.nn as nn
-import torch.optim as optim
 import torch.nn.functional as F
-import os
-import random
+import torch.optim as optim
+from sklearn.metrics import (
+    accuracy_score, mean_squared_error, mean_absolute_error, r2_score,
+    precision_recall_fscore_support, confusion_matrix
+)
+from sklearn.model_selection import train_test_split, KFold
+from sklearn.preprocessing import LabelEncoder, StandardScaler
 from scipy.stats import pearsonr, spearmanr, kendalltau
 
-def set_seed(seed=42):
+
+def set_seed(seed: int = 42) -> None:
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -23,23 +26,25 @@ def set_seed(seed=42):
     torch.backends.cudnn.benchmark = False
     os.environ['PYTHONHASHSEED'] = str(seed)
 
-set_seed(42)
 
 class MNJudge(nn.Module):
-    def __init__(self, input_dim, num_classes):
-        super(MNJudge, self).__init__()
-        # Theta has an extra row because the input X is augmented with a bias column.
-        self.Theta = nn.Parameter(torch.zeros(input_dim + 1, num_classes))
-    
-    def forward(self, X, log_p):
-        # Logits are computed as a linear transformation of X plus the external bias log_p.
-        logits = X @ self.Theta + log_p
-        return F.softmax(logits, dim=1)
+    def __init__(self, input_dim: int, num_classes: int):
+        super().__init__()
+        self.Theta = nn.Parameter(torch.zeros(input_dim, num_classes, dtype=torch.float64))
+        self.bias = nn.Parameter(torch.zeros(num_classes, dtype=torch.float64)) 
+
+    def forward(self, X: torch.Tensor) -> torch.Tensor:
+        return X @ self.Theta + self.bias
+
+    def regularization_loss(self, lambda_theta: float) -> torch.Tensor:
+        return lambda_theta * torch.sum(self.Theta ** 2)
+
 
 class DeltaMultinomial:
-    def __init__(self, train_path, test_path, train_emb_path, test_emb_path, size=100, 
-                 lr=1e-3, epochs=10000, lambda_l2=0.0, lambda_l1=0.0,
-                 use_external_bias=True, device=None, seed=42):
+    def __init__(self, train_path, test_path, train_emb_path, test_emb_path,
+                 size=100, lr=1, epochs=10000, lambda_theta=0.0,
+                 device=None, seed=42, standardize=True, use_external_bias=True,
+                 is_percent=True):
         set_seed(seed)
         self.train_path = train_path
         self.test_path = test_path
@@ -48,266 +53,176 @@ class DeltaMultinomial:
         self.size = size
         self.lr = lr
         self.epochs = epochs
-        self.lambda_l2 = lambda_l2
-        self.lambda_l1 = lambda_l1
-        self.use_external_bias = use_external_bias
+        self.lambda_theta = lambda_theta
+        self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.label_encoder = LabelEncoder()
-        self.device = device if device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = None
-        self.min_epochs = 200
+        self.reg_data = {}
+        self.standardize = standardize
+        self.scaler = None
+        self.use_external_bias = use_external_bias
+        self.is_percent = is_percent
+
+    def _load_data(self):
+        train_df = pd.read_csv(self.train_path)
+        test_df = pd.read_csv(self.test_path)
+        train_embeddings = np.load(self.train_emb_path)
+        test_embeddings = np.load(self.test_emb_path)
+        return train_df, test_df, train_embeddings, test_embeddings
+
+    def _clean_data(self, df):
+        df.dropna(subset=["human_score", "llm_score"], inplace=True)
+        df["human_score"] = df["human_score"].astype(int)
+        df["llm_score"] = df["llm_score"].astype(int)
+        df["target_probability"] = df["target_probability"].apply(ast.literal_eval)
+
+    def _encode_labels(self, train_df, test_df):
+        all_labels = np.concatenate([train_df["human_score"], test_df["human_score"]])
+        self.label_encoder.fit(all_labels)
 
     def compute_log_p(self, df):
-        log_p_list = []
         label_classes = self.label_encoder.classes_
-        indices = self.label_encoder.inverse_transform(np.arange(len(label_classes)))
+        reverse_label_dict = {label: idx for idx, label in enumerate(label_classes)}
+        log_p_list = []
         for _, row in df.iterrows():
             tp = row["target_probability"]
             p_vec = np.zeros(len(label_classes))
-            # Make sure that the probability vector order matches label_encoder.classes_
-            for idx, key in enumerate(indices):
-                if key in tp:
-                    p_vec[idx] = tp[key]
-            p_vec = np.clip(p_vec, 1e-8, 1.0 - 1e-8)
-            log_p_list.append(np.log(p_vec))
-        return np.stack(log_p_list, axis=0)
-
-    def augment_with_bias(self, X):
-        n = X.shape[0]
-        bias_col = np.ones((n, 1))
-        return np.hstack([X, bias_col])
+            for key in tp:
+                if int(key) in reverse_label_dict:
+                    p_vec[reverse_label_dict[int(key)]] = tp[key]
+            log_p_list.append(np.log(np.clip(p_vec, 1e-8, 1.0 - 1e-8)))
+        return np.stack(log_p_list)
 
     def preprocess(self):
-        train_df = pd.read_csv(self.train_path)
-        test_df = pd.read_csv(self.test_path)
+        train_df, test_df, train_embeddings, test_embeddings = self._load_data()
+        self._clean_data(train_df)
+        self._clean_data(test_df)
+        self._encode_labels(train_df, test_df)
 
-        train_embeddings = np.load(self.train_emb_path)
-        test_embeddings = np.load(self.test_emb_path)
+        if not self.is_percent or (self.is_percent and self.size != 100):
+            if self.is_percent:
+                n = min(int(len(train_df) * self.size/100), len(train_df))
+            else:
+                n = self.size
+            selected_indices = np.random.choice(train_df.index, size=n, replace=False)
+            train_df = train_df.loc[selected_indices].reset_index(drop=True)
 
-        for df in [train_df, test_df]:
-            df.dropna(subset=["human_score"], inplace=True)
-            df.dropna(subset=["llm_score"], inplace=True)
-            df["human_score"] = df["human_score"].astype(int)
-            df["llm_score"] = df["llm_score"].astype(int)
-            df["target_probability"] = df["target_probability"].apply(ast.literal_eval)
-
-        total_rows = min(len(train_df), train_embeddings.shape[0])
-        sample_size = int((self.size / 100.0) * total_rows)
-        selected_indices = np.random.choice(train_df.index, size=sample_size, replace=False)
-        train_df = train_df.loc[selected_indices].reset_index(drop=True)
-
-        all_labels = np.concatenate([train_df["human_score"].values, test_df["human_score"].values])
-        self.label_encoder.fit(all_labels)
-
-        X = train_embeddings[train_df["embedding_index_critique"].values]
-        X = self.augment_with_bias(X)
-        y_train = self.label_encoder.transform(train_df["human_score"].values)
-        y_test = self.label_encoder.transform(test_df["human_score"].values)
-
-        X_train, X_val, y_train, y_val = train_test_split(X, y_train, test_size=0.2, random_state=42)
+        X_train = train_embeddings[train_df["embedding_index_critique"].values]
+        y_train = self.label_encoder.transform(train_df["human_score"])
 
         X_test = test_embeddings[test_df["embedding_index_critique"].values]
-        X_test = self.augment_with_bias(X_test)
+        y_test = self.label_encoder.transform(test_df["human_score"])
 
-        log_p_all_train = self.compute_log_p(train_df)
-        log_p_train, log_p_val = train_test_split(log_p_all_train, test_size=0.2, random_state=42)
+        log_p_train = self.compute_log_p(train_df)
         log_p_test = self.compute_log_p(test_df)
 
-        return X_train, X_val, y_train, y_val, X_test, y_test, log_p_train, log_p_val, log_p_test
-
-    def train_model(self, X_train, y_train, log_p_train, 
-                    X_val=None, y_val=None, log_p_val=None, 
-                    early_stopping_patience=10):
-        # Convert training data to tensors
-        X_train_t = torch.tensor(X_train, dtype=torch.float32, device=self.device)
         if self.use_external_bias:
-            log_p_train_t = torch.tensor(log_p_train, dtype=torch.float32, device=self.device)
-        else:
-            # Use zeros if external bias is disabled.
-            num_classes = self.label_encoder.classes_.shape[0]
-            log_p_train_t = torch.zeros((X_train.shape[0], num_classes), dtype=torch.float32, device=self.device)
-        y_train_t = torch.tensor(y_train, dtype=torch.long, device=self.device)
+            X_train = np.hstack([X_train, log_p_train])
+            X_test = np.hstack([X_test, log_p_test])
 
-        n, input_dim_aug = X_train.shape
-        num_classes = log_p_train.shape[1]
+        if self.standardize:
+            self.scaler = StandardScaler()
+            X_train = self.scaler.fit_transform(X_train)
+            X_test = self.scaler.transform(X_test)
 
-        # Initialize the model; note that we pass the unaugmented input dimension.
-        self.model = MNJudge(input_dim=input_dim_aug - 1, num_classes=num_classes).to(self.device)
-        optimizer = optim.Adam(self.model.parameters(), lr=self.lr)
-
-        best_val_loss = float('inf')
-        best_state_dict = None
-        epochs_without_improvement = 0
-
-        for epoch in range(1, self.epochs + 1):
-            self.model.train()
-            optimizer.zero_grad()
-
-            logits = X_train_t @ self.model.Theta + log_p_train_t
-            log_probs = F.log_softmax(logits, dim=1)
-            loss = F.nll_loss(log_probs, y_train_t)
-
-            # Add regularization penalties if set
-            if self.lambda_l2 > 0:
-                l2_reg = torch.sum(self.model.Theta ** 2)
-                loss += self.lambda_l2 * l2_reg
-            if self.lambda_l1 > 0:
-                l1_reg = torch.sum(torch.abs(self.model.Theta))
-                loss += self.lambda_l1 * l1_reg
-
-            loss.backward()
-            optimizer.step()
-
-            # Validation phase (if provided)
-            if X_val is not None and y_val is not None and log_p_val is not None:
-                self.model.eval()
-                with torch.no_grad():
-                    X_val_t = torch.tensor(X_val, dtype=torch.float32, device=self.device)
-                    if self.use_external_bias:
-                        log_p_val_t = torch.tensor(log_p_val, dtype=torch.float32, device=self.device)
-                    else:
-                        log_p_val_t = torch.zeros((X_val.shape[0], num_classes),
-                                                    dtype=torch.float32, device=self.device)
-                    y_val_t = torch.tensor(y_val, dtype=torch.long, device=self.device)
-                    val_logits = X_val_t @ self.model.Theta + log_p_val_t
-                    val_log_probs = F.log_softmax(val_logits, dim=1)
-                    val_loss = F.nll_loss(val_log_probs, y_val_t)
-                    if self.lambda_l2 > 0:
-                        l2_reg = torch.sum(self.model.Theta ** 2)
-                        val_loss += self.lambda_l2 * l2_reg
-                    if self.lambda_l1 > 0:
-                        l1_reg = torch.sum(torch.abs(self.model.Theta))
-                        val_loss += self.lambda_l1 * l1_reg
-
-                # Skip early stopping check before minimum epochs are completed.
-                if epoch < self.min_epochs:
-                    continue
-
-                if val_loss.item() < best_val_loss - 1e-4:
-                    best_val_loss = val_loss.item()
-                    best_state_dict = {k: v.cpu().clone() for k, v in self.model.state_dict().items()}
-                    epochs_without_improvement = 0
-                else:
-                    epochs_without_improvement += 1
-
-                if epochs_without_improvement >= early_stopping_patience:
-                    print(f"Early stopping triggered at epoch {epoch}")
-                    if best_state_dict is not None:
-                        self.model.load_state_dict(best_state_dict)
-                    break
-
-        return self.model
-
-    def tune_hyperparameters(self, X_train, y_train, log_p_train, X_val, y_val, log_p_val,
-                               lambda_l2_values, patience=10):
-        best_acc_score = 0
-        best_lambda_l2 = self.lambda_l2
-        best_state_dict = None
-
-        for l2 in lambda_l2_values:
-            self.lambda_l2 = l2
-
-            model = self.train_model(X_train, y_train, log_p_train, 
-                                     X_val, y_val, log_p_val, 
-                                     early_stopping_patience=patience)
-            val_preds, _ = self.predict(X_val, log_p_val)
-            average_val = "weighted" if len(np.unique(y_train)) != 2 else "binary"
-            val_acc_score = accuracy_score(y_val, val_preds)
-            print(f"Validation Accuracy: {val_acc_score:.4f} @ λ₂: {l2}")
-            if val_acc_score > best_acc_score:
-                best_acc_score = val_acc_score
-                best_lambda_l2 = l2
-                best_state_dict = {k: v.cpu().clone() for k, v in model.state_dict().items()}
-
-        print(f"Best regularization: λ₂={best_lambda_l2} with validation accuracy {best_acc_score:.4f}")
-        self.lambda_l2 = best_lambda_l2
-        if best_state_dict is not None:
-            self.model.load_state_dict(best_state_dict)
-
-    def _predict_internal(self, X, log_p):
-        X_t = torch.tensor(X, dtype=torch.float32, device=self.device)
-        if self.use_external_bias:
-            log_p_t = torch.tensor(log_p, dtype=torch.float32, device=self.device)
-        else:
-            num_classes = self.label_encoder.classes_.shape[0]
-            log_p_t = torch.zeros((X.shape[0], num_classes), dtype=torch.float32, device=self.device)
-        self.model.eval()
-        with torch.no_grad():
-            logits = X_t @ self.model.Theta + log_p_t
-            probs = F.softmax(logits, dim=1)
-        return probs.cpu().numpy()
-
-    def predict(self, X_test, log_p_test):
-        probs = self._predict_internal(X_test, log_p_test)
-        return np.argmax(probs, axis=1), probs
-
-    def evaluate(self, X_test, y_test, log_p_test):
-        y_pred, proba = self.predict(X_test, log_p_test)
-        
-        mse = mean_squared_error(y_test, y_pred)
-        mae = mean_absolute_error(y_test, y_pred)
-        r2 = r2_score(y_test, y_pred)
-        min_pred, max_pred = np.min(y_pred), np.max(y_pred)
-        
-        average_val = "weighted" if len(np.unique(y_test)) != 2 else "binary"
-        accuracy_val = accuracy_score(y_test, y_pred)
-        precision, recall, f1, _ = precision_recall_fscore_support(
-            y_test, y_pred, average=average_val, zero_division=1
+        return map(
+            lambda x, dtype: torch.tensor(x, dtype=dtype, device=self.device),
+            (X_train, y_train, X_test, y_test),
+            (torch.float64, torch.long, torch.float64, torch.long)
         )
 
-        encoded_classes = np.arange(len(self.label_encoder.classes_))
-        
-        cm = confusion_matrix(y_test, y_pred, labels=encoded_classes)
+    def train(self, X_train, y_train, lambda_theta=None, n_steps=10000, batch_size=512):
+        num_classes = len(self.label_encoder.classes_)
+        input_dim = X_train.shape[1]
+        self.model = MNJudge(input_dim=input_dim, num_classes=num_classes).to(self.device)
 
-        if proba.shape[1] == 2:
-            expected_score = proba[:, 1]
-        else:
-            class_vals = self.label_encoder.inverse_transform(
-                np.arange(proba.shape[1])
-            ).astype(float)
-            expected_score = np.dot(proba, class_vals)
-        pearson_r,  _ = pearsonr(y_test, expected_score)
-        spearman_rho, _ = spearmanr(y_test, expected_score)
-        kendall_tau, _ = kendalltau(y_test, expected_score)
-        
+        learning_rate = 1.0 / np.sqrt(n_steps)
+        optimizer = optim.SGD(self.model.parameters(), lr=learning_rate)
 
+        self.model.train()
+        dataset_size = X_train.shape[0]
+
+        for step in range(n_steps):
+            indices = torch.randint(0, dataset_size, (batch_size,), device=self.device)
+            X_batch = X_train[indices]
+            y_batch = y_train[indices]
+
+            optimizer.zero_grad()
+            logits = self.model(X_batch)
+            loss = F.cross_entropy(logits, y_batch)
+            loss += self.model.regularization_loss(lambda_theta)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+            optimizer.step()
+        return self.model
+
+
+    def tune_hyperparameters(self, X_train, y_train, k_folds=5, lambda_values=None):
+        best_val_acc = -float('inf')
+        best_lambda_theta = self.lambda_theta
+        best_state_dict = None
+        kf = KFold(n_splits=k_folds, shuffle=True, random_state=42)
+
+        for l2_theta in lambda_values:
+            fold_accuracies = []
+
+            for train_idx, val_idx in kf.split(X_train):
+                X_tr, X_val = X_train[train_idx], X_train[val_idx]
+                y_tr, y_val = y_train[train_idx], y_train[val_idx]
+
+                model = self.train(X_tr, y_tr, lambda_theta=l2_theta)
+
+                self.model.eval()
+                with torch.no_grad():
+                    val_logits = self.model(X_val)
+                    preds = torch.argmax(val_logits, dim=1)
+                    acc = accuracy_score(y_val.cpu().numpy(), preds.cpu().numpy())
+                    fold_accuracies.append(acc)
+
+            avg_val_acc = np.mean(fold_accuracies)
+            self.reg_data[l2_theta] = avg_val_acc
+            print(f"Avg Val Accuracy: {avg_val_acc:.4f} @ lambda_theta={l2_theta}")
+
+            if avg_val_acc > best_val_acc:
+                best_val_acc = avg_val_acc
+                best_lambda_theta = l2_theta
+                best_state_dict = {k: v.cpu().clone() for k, v in self.model.state_dict().items()}
+
+        print(f"Best lambda_theta={best_lambda_theta} with avg accuracy={best_val_acc:.4f}")
+        self.lambda_theta = best_lambda_theta
+        self.model.load_state_dict(best_state_dict)
+
+    def predict(self, X):
+        self.model.eval()
+        with torch.no_grad():
+            logits = self.model(X)
+            probs = F.softmax(logits, dim=1)
+        return np.argmax(probs.cpu().numpy(), axis=1), probs.cpu().numpy()
+
+    def evaluate(self, X, y):
+        y_pred, proba = self.predict(X)
+        expected_score = proba[:, 1] if proba.shape[1] == 2 else np.dot(proba, self.label_encoder.inverse_transform(np.arange(proba.shape[1])).astype(float))
+        y = y.cpu().numpy()
         return {
-            "MSE": mse,
-            "MAE": mae,
-            "R2 Score": r2,
-            "Min Prediction": min_pred,
-            "Max Prediction": max_pred,
-            "Accuracy": accuracy_val,
-            "Precision": precision,
-            "Recall": recall,
-            "F1 Score": f1,
-            "Confusion Matrix": cm,
+            "MSE": mean_squared_error(y, expected_score),
+            "MAE": mean_absolute_error(y, expected_score),
+            "R2 Score": r2_score(y, expected_score),
+            "Min Prediction": np.min(y_pred),
+            "Max Prediction": np.max(y_pred),
+            "Accuracy": accuracy_score(y, y_pred),
+            "Precision": precision_recall_fscore_support(y, y_pred, average="weighted", zero_division=1)[0],
+            "Recall": precision_recall_fscore_support(y, y_pred, average="weighted", zero_division=1)[1],
+            "F1 Score": precision_recall_fscore_support(y, y_pred, average="weighted", zero_division=1)[2],
+            "Confusion Matrix": confusion_matrix(y, y_pred, labels=np.arange(len(self.label_encoder.classes_))),
             "Class Labels": self.label_encoder.classes_.tolist(),
-            "Pearson r": pearson_r,
-            "Spearman ρ": spearman_rho,
-            "Kendall τ": kendall_tau,
+            "Pearson r": pearsonr(y, expected_score)[0],
+            "Spearman ρ": spearmanr(y, expected_score)[0],
+            "Kendall τ": kendalltau(y, expected_score)[0],
         }
-        
-    def experiment(self):
-        X_train, X_val, y_train, y_val, X_test, y_test, log_p_train, log_p_val, log_p_test = self.preprocess()
-        X_train_full = np.vstack([X_train, X_val])
-        y_train_full = np.hstack([y_train, y_val])
-        log_p_train_full = np.vstack([log_p_train, log_p_val])
-        
-        lambda_l2_values = [10.0 ** x for x in range(-5, 6)]
-        
-        self.tune_hyperparameters(X_train, y_train, log_p_train, 
-                                  X_val, y_val, log_p_val,
-                                  lambda_l2_values, patience=10)
-        
-        results = self.evaluate(X_test, y_test, log_p_test)
-        return results
 
-# Example usage:
-# model_wrapper = DeltaMultinomial(
-#     train_path='train.csv', test_path='test.csv',
-#     train_emb_path='train_emb.npy', test_emb_path='test_emb.npy',
-#     size=100, lr=1e-3, epochs=10000, lambda_l2=0.0, lambda_l1=0.0,
-#     use_external_bias=False  # Set to False to disable the external bias.
-# )
-# experiment_results = model_wrapper.experiment()
-# print("Evaluation Results:", experiment_results)
+    def experiment(self):
+        X_train, y_train, X_test, y_test = self.preprocess()
+        lambda_values = [10.0 ** x for x in range(-5, 6)]
+        self.tune_hyperparameters(X_train, y_train, k_folds=5, lambda_values=lambda_values)
+        self.train(X_train, y_train, lambda_theta=self.lambda_theta)
+        return self.evaluate(X_test, y_test)

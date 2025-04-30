@@ -1,11 +1,10 @@
 import numpy as np
 import pandas as pd
-from sklearn.metrics import mean_squared_error, mean_absolute_error, accuracy_score, precision_recall_fscore_support, r2_score
+from sklearn.metrics import mean_squared_error, mean_absolute_error, accuracy_score, precision_recall_fscore_support, r2_score, confusion_matrix
 import os
 import random
 import torch
 from scipy.stats import pearsonr, spearmanr, kendalltau
-from sklearn.metrics import confusion_matrix
 
 def set_seed(seed=42):
     random.seed(seed)

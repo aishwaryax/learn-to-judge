@@ -52,7 +52,8 @@ def run_all_models_for_seed(args_tuple):
 
     csv_path = os.path.join(args.experiment_folder, "dataset_size_experiment_results.csv")
 
-    dataset_sizes = list(range(10, 101, 10))
+    dataset_sizes = list(range(1, 10))
+    dataset_sizes = dataset_sizes + list(range(10, 101, 10))
 
     for size in dataset_sizes:
 

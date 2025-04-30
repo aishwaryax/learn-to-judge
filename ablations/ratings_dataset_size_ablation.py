@@ -46,7 +46,8 @@ def run_all_models_for_seed(args_tuple):
         "Delta Multinomial": DeltaMultinomial,
     }
 
-    dataset_sizes = list(range(10, 101, 10))
+    dataset_sizes = list(range(1, 10))
+    dataset_sizes = dataset_sizes + list(range(10, 101, 10))
 
     for dataset_size in dataset_sizes:
         for model_name, model_class in models.items():

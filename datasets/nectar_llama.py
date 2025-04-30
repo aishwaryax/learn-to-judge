@@ -51,10 +51,10 @@ def get_llm_prompt(instruction, response1,response2):
         An instruction (might include an Input inside it), a response to evaluate, and a score rubric representing a evaluation criteria are given.
         1. Write a detailed feedback that assess the quality of the response strictly based on the given score rubric, not evaluating in general.
         2. Make comparisons between Response A and Response B. Instead of examining Response A and Response B separately, go straight to the point and mention about the commonalities and differences between them.
-        3. After writing the feedback, indicate the better response, either "A" or "B". You should refer to the score rubric.
+        3. After writing the feedback, indicate the better response, either "A" or "B".
         4. The output format should look as follows: "Feedback: (write a feedback) RESULT: (Either "A" or "B")"
         5. Please do not generate any other opening, closing, and explanations and strictly follow the format.
-         
+
         The instruction to evaluate:
         {instruction}
 

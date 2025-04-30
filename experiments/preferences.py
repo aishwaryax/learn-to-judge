@@ -8,6 +8,7 @@ from regressors.llm2 import LLM2Regressor
 from pathlib import Path
 import sys
 from regressors.mean_human_baseline import MeanHumanRegressor
+import json
 
 def save_results(results, model_name, experiment_folder):
     experiment_folder = Path(experiment_folder)
@@ -50,13 +51,16 @@ def main():
         "LLMRegressor": LLMRegressor,
         "Mean Human": MeanHumanRegressor,        
     }
-    
+    reg_data = {}
     for model_name, model_class in relative_models.items():
         if model_name == "LLMRegressor" or model_name == "Mean Human":
             model = model_class(args.relative_test_path)
         else:
             model = model_class(args.relative_train_path, args.relative_test_path, args.relative_train_emb_path, args.relative_test_emb_path, use_external_bias=True if 'Delta' in model_name else False)
         results = model.experiment()
+        if hasattr(model, "reg_data") and model.reg_data is not None:
+            reg_data[model_name] = model.reg_data
+
         
         print(f"{model_name} Experiment Results:")
         for metric, value in results.items():
@@ -74,6 +78,9 @@ def main():
             model = model_class(args.absolute_train_path, args.absolute_test_path, args.absolute_train_emb1_path, args.absolute_train_emb2_path, args.absolute_test_emb1_path, args.absolute_test_emb2_path, use_external_bias=True if 'Delta' in model_name else False)
         results = model.experiment()
         
+        if hasattr(model, "reg_data") and model.reg_data is not None:
+            reg_data[model_name] = model.reg_data
+
         print(f"{model_name} Experiment Results:")
         for metric, value in results.items():
             if isinstance(value, (int, float)):
@@ -82,6 +89,8 @@ def main():
                 print(f"{metric}: {value}")
         print("================================================")
         save_results(results, model_name, args.experiment_folder)
+    with open(f"{args.experiment_folder}/reg_data.json", "w") as f:
+        json.dump({k: {str(key): val for key, val in v.items()} for k, v in reg_data.items()}, f, indent=2)
 
 if __name__ == "__main__":
     main()

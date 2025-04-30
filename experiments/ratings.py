@@ -6,6 +6,7 @@ from regressors.delta_ls import DeltaLS
 from pathlib import Path
 from regressors.llm import LLMRegressor
 from regressors.mean_human_baseline import MeanHumanRegressor
+import json
 
 def save_results(results, model_name, experiment_folder):
     experiment_folder = Path(experiment_folder)
@@ -37,13 +38,16 @@ def main():
         "LLMRegressor": LLMRegressor,
         "Mean Human": MeanHumanRegressor,
     }
-    
+    reg_data = {}
     for model_name, model_class in models.items():
         if model_name == "LLMRegressor" or model_name == "Mean Human":
-            model = model_class(args.test_path)            
+            model = model_class(args.test_path)      
+            results = model.experiment()      
         else:
             model = model_class(args.train_path, args.test_path, args.train_emb_path, args.test_emb_path, use_external_bias=True if "Delta" in model_name else False)
-        results = model.experiment()
+            results = model.experiment()
+            if hasattr(model, "reg_data") and model.reg_data is not None:
+                reg_data[model_name] = model.reg_data
         
         print(f"{model_name} Experiment Results:")
         for metric, value in results.items():
@@ -53,6 +57,9 @@ def main():
                 print(f"{metric}: {value}")
         print("================================================")        
         save_results(results, model_name, args.experiment_folder)
-
+    
+    with open(f"{args.experiment_folder}/reg_data.json", "w") as f:
+        json.dump({k: {str(key): val for key, val in v.items()} for k, v in reg_data.items()}, f, indent=2)
+        
 if __name__ == "__main__":
     main()
