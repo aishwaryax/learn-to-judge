@@ -34,53 +34,66 @@ def get_embeddings(texts, tokenizer, model, batch_size=8):
     return np.vstack(embeddings)
 
 
-def compute_scores(question, response, targets, tokenizer, model, top_k=100, dataset_type="absolute"):
+def compute_scores(question, response, actual_target, targets, tokenizer, model, top_k=100, dataset_type="absolute"):
     input_text = f"{question}{response}"
     input_tokens = tokenizer(input_text, return_tensors="pt").to(device)
     input_ids = input_tokens["input_ids"]
-    
+
     question_tokens = tokenizer(question, return_tensors="pt")["input_ids"]
-    response_tokens = tokenizer(response, return_tensors="pt")["input_ids"]
-    
     question_length = question_tokens.shape[1]
     response_start = question_length
     response_end = input_ids.shape[1]
-    
+
     with torch.no_grad():
         outputs = model(**input_tokens)
         logits = outputs.logits
-        
+
     shifted_logits = logits[:, :-1, :]
     shifted_input_ids = input_ids[:, 1:]
 
     response_logits = shifted_logits[0, response_start:response_end, :]
     response_token_ids = shifted_input_ids[0, response_start:response_end]
-    
+
     response_log_probs = -torch.nn.functional.cross_entropy(
         response_logits, response_token_ids, reduction='none'
     )
-
     self_consistency_score = torch.exp(response_log_probs.mean()).item()
-    
-    target_probabilities = {}
 
-    for index, target in enumerate(targets):
-        target_token_id = tokenizer(target, add_special_tokens=False)["input_ids"][-1]
-        target_token_index = (response_token_ids == target_token_id).nonzero(as_tuple=True)
+    target_token_ids = {
+        target: tokenizer(target, add_special_tokens=False)["input_ids"][-1]
+        for target in targets
+    }
 
-        if target_token_index[0].numel() > 0:
-            target_index = target_token_index[0][-1].item()
-            target_logit = response_logits[target_index, :]
-            target_prob = torch.nn.functional.softmax(target_logit, dim=-1)[target_token_id].item()
-            target_probabilities[target if dataset_type == "absolute" else index] = target_prob
-        else:
-            target_probabilities[target if dataset_type == "absolute" else index] = 0.0
+    target_to_index_mapping = {target: i for i, target in enumerate(targets)}
+    if dataset_type == "relative":
+        if actual_target == "0":
+            actual_target = "A"
+        elif actual_target == "1":
+            actual_target = "B"
+    actual_token_id = target_token_ids.get(actual_target, None)
+    if actual_token_id is None:
+        return {i: 0.0 for i, k in enumerate(targets)}, self_consistency_score
+
+    match_pos = (response_token_ids == actual_token_id).nonzero(as_tuple=True)
+    if match_pos[0].numel() == 0:
+        return {i: 0.0 for i, k in enumerate(targets)}, self_consistency_score
+
+    target_index = match_pos[0][-1].item()
+
+    target_logit = response_logits[target_index, :]
+    probs = torch.nn.functional.softmax(target_logit, dim=-1)
+
+    target_probabilities = {
+        target_to_index_mapping[target]: probs[token_id].item()
+        for target, token_id in target_token_ids.items()
+    }
 
     total_prob = sum(target_probabilities.values())
+
     if total_prob > 0:
         target_probabilities = {k: v / total_prob for k, v in target_probabilities.items()}
     else:
-        target_probabilities = {k: 0.0 for k in target_probabilities}
+        target_probabilities = {k: 0.0 for k in targets}
 
     return target_probabilities, self_consistency_score
 
@@ -118,7 +131,7 @@ if __name__ == "__main__":
 
     df["target_probability"], df["self_consistency_score"] = zip(*df.apply(
         lambda row: compute_scores(
-            row["llm_prompt"], row["llm_response"], targets, tokenizer, model, dataset_type=args.dataset_type
+            row["llm_prompt"], row["llm_response"], str(row['llm_score']), targets, tokenizer, model, dataset_type=args.dataset_type
         ), axis=1
     ))
 
