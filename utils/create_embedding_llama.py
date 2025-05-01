@@ -111,7 +111,6 @@ if __name__ == "__main__":
         tokenizer.pad_token = tokenizer.unk_token if tokenizer.unk_token else tokenizer.eos_token
 
     df = pd.read_csv(args.input_file)
-    df = df[:10]
     df = df[
         df["llm_response"].notna() & 
         (df["llm_response"].str.strip() != "") & 
