@@ -51,6 +51,7 @@ def build_prompt(instruction: str, response: str, rubric_config: dict):
         min_score=rubric_config["min_score"],
         max_score=rubric_config["max_score"],
     )
+    # print(f"Prompt: {prompt}")
     return prompt
 
 
@@ -82,6 +83,7 @@ def main():
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
     # Load tokenizer and model
+
     tokenizer = AutoTokenizer.from_pretrained(args.model_dir, padding_side="left")
     tokenizer.pad_token = tokenizer.eos_token
 
