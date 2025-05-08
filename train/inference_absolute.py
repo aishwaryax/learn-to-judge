@@ -15,6 +15,10 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error, accuracy_sc
 from scipy.stats import pearsonr, spearmanr, kendalltau
 from rubric_config import RUBRIC_CONFIG
 import re
+import random
+
+# fix the seed if you want reproducible “random” fills
+random.seed(42)
 
 
 ABSOLUTE_PROMPT = """###Task Description:
@@ -72,7 +76,7 @@ def parse_args():
         help="Where to write the results (with predicted_score and metrics)"
     )
     parser.add_argument(
-        "--batch_size", type=int, default=16,
+        "--batch_size", type=int, default=64,
         help="Batch size for inference"
     )
     return parser.parse_args()
@@ -148,6 +152,8 @@ def main():
 
     # Evaluation metrics
     if "human_score" in df.columns:
+        df['predicted_score'] = df['predicted_score'].apply(
+        lambda x: x if pd.notnull(x) else random.randint(rubric_config["min_score"], rubric_config["max_score"]))
         df_eval = df.dropna(subset=["predicted_score", "human_score"]).copy()
         y_true = df_eval["human_score"].astype(int)
         y_pred = df_eval["predicted_score"].astype(int)
@@ -168,8 +174,9 @@ def main():
         print(f"Kendall tau    : {kendall_corr:.4f}")
     
     # Save results
-    # df.to_csv(args.output_csv, index=False)
-    # print(f"Saved predictions and metrics to {args.output_csv}")
+
+    df.to_csv(args.output_csv, index=False)
+    print(f"Saved predictions and metrics to {args.output_csv}")
 
 
 if __name__ == "__main__":

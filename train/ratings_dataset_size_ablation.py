@@ -103,7 +103,7 @@ def run_for_seed(args_tuple):
             writer = csv.writer(f)
             if write_header:
                 writer.writerow(['Model'] + ['Dataset Size'] + ['Seed'] + list(metrics.keys()))
-            writer.writerow([seed] + list(metrics.values()))
+            writer.writerow(["sft"] + [size]+  [seed] + list(metrics.values()))
 
 
 def main():

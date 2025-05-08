@@ -28,7 +28,7 @@ def parse_args():
     parser.add_argument('--dataset_path', type=str, required=True, help="Path to the dataset CSV file.")
     parser.add_argument('--save_path', type=str, required=True, help="Path to save the fine-tuned model.")
     parser.add_argument('--epochs', type=int, default=2, help="Number of training epochs.")
-    parser.add_argument('--batch_size', type=int, default=4, help="Batch size for training.")
+    parser.add_argument('--batch_size', type=int, default=16, help="Batch size for training.")
     parser.add_argument('--lr', type=float, default=5e-6, help="Learning rate.")
     parser.add_argument('--reg_lambda', type=float, default=1e-4, help="Regularization lambda value.")
     return parser.parse_args()
@@ -80,7 +80,6 @@ def _create_hf_dataset(data_csv, min_score=1, max_score=5):
             min_score=rubric_config["min_score"],
             max_score=rubric_config["max_score"],
         )
-        print(prompt + f" {int(row['human_score'])}")
         return prompt + f" {int(row['human_score'])}" 
     data_df['text'] = data_df.apply(format_prompt, axis=1)
     hf_dataset = Dataset.from_pandas(data_df)
@@ -89,7 +88,6 @@ def _create_hf_dataset(data_csv, min_score=1, max_score=5):
 tokenizer = AutoTokenizer.from_pretrained(args.model_repo, use_auth_token=os.environ["HUGGINGFACE_TOKEN"])
 tokenizer.pad_token = tokenizer.eos_token
 maxseq = 4096
-
 raw_ds = _create_hf_dataset(args.dataset_path)
 raw_ds = raw_ds.filter(lambda x: len(tokenizer(x["text"], add_special_tokens=False)["input_ids"]) <= maxseq)
 raw_ds = raw_ds.shuffle(seed=42)
