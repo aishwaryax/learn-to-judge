@@ -16,6 +16,9 @@ from torch.utils.data import DataLoader
 import warnings
 from transformers.trainer_utils import get_last_checkpoint
 from rubric_config import RUBRIC_CONFIG
+import random
+import time 
+
 warnings.filterwarnings("ignore")
 
 
@@ -28,12 +31,27 @@ def parse_args():
     parser.add_argument('--dataset_path', type=str, required=True, help="Path to the dataset CSV file.")
     parser.add_argument('--save_path', type=str, required=True, help="Path to save the fine-tuned model.")
     parser.add_argument('--epochs', type=int, default=2, help="Number of training epochs.")
-    parser.add_argument('--batch_size', type=int, default=16, help="Batch size for training.")
+    parser.add_argument('--batch_size', type=int, default=4, help="Batch size for training.")
     parser.add_argument('--lr', type=float, default=5e-6, help="Learning rate.")
     parser.add_argument('--reg_lambda', type=float, default=1e-4, help="Regularization lambda value.")
+    parser.add_argument('--data_percent', type=float, default=100, help="Dataset percent size.")
+    parser.add_argument('--seed', type=int, default=42, help="Dataset percent size.")
     return parser.parse_args()
 
 args = parse_args()
+
+seed = args.seed
+def set_seed(seed: int = 42) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    os.environ['PYTHONHASHSEED'] = str(seed)
+print(f"Seed : {seed}")
+set_seed(seed)
 
 
 ABSOLUTE_PROMPT_TEMPLATE = """###Task Description:
@@ -67,6 +85,10 @@ def _create_hf_dataset(data_csv, min_score=1, max_score=5):
     data_df = pd.read_csv(data_csv)
     data_df = data_df.dropna(subset=["human_score"])
     data_df['score'] = pd.to_numeric(data_df['human_score'], errors='coerce')
+    if args.data_percent != 100:
+        n = min(int(len(data_df) * args.data_percent/100), len(data_df))
+        print("n samples from data, n = ", n)
+        data_df = data_df.sample(n=n).reset_index(drop=True)
     rubric_config = get_rubric_and_scores(data_csv)
 
     #short dataset for test
@@ -85,9 +107,12 @@ def _create_hf_dataset(data_csv, min_score=1, max_score=5):
     hf_dataset = Dataset.from_pandas(data_df)
     return hf_dataset
 
+start_time = time.time()
 tokenizer = AutoTokenizer.from_pretrained(args.model_repo, use_auth_token=os.environ["HUGGINGFACE_TOKEN"])
 tokenizer.pad_token = tokenizer.eos_token
 maxseq = 4096
+tokenizer_time = time.time()
+print(f"Tokenizer loaded in {tokenizer_time - start_time:.2f} seconds")
 raw_ds = _create_hf_dataset(args.dataset_path)
 raw_ds = raw_ds.filter(lambda x: len(tokenizer(x["text"], add_special_tokens=False)["input_ids"]) <= maxseq)
 raw_ds = raw_ds.shuffle(seed=42)
@@ -127,6 +152,8 @@ model = AutoModelForCausalLM.from_pretrained(
 )
 model = prepare_model_for_kbit_training(model)
 model.resize_token_embeddings(len(tokenizer))
+model_time = time.time()
+print(f"Model loaded and prepped in {model_time - tokenizer_time:.2f} seconds")
 
 # 6) Now attach your LoRA adapters
 config = LoraConfig(
@@ -177,7 +204,10 @@ trainer = Trainer(
 #     raise ValueError(f"No checkpoint found in {args.save_path}")
 # print(f"➡️  Resuming from {last_ckpt}")
 
+train_start_time = time.time()
 trainer.train()
+train_end_time = time.time()
+print(f"Training took {(train_end_time - train_start_time) / 60:.2f} minutes")
 
 # 8) Merge adapters & save
 model.save_pretrained(f"{args.save_path}/final_checkpoint")

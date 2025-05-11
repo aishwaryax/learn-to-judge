@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -c 2  # Number of Cores per Task
 #SBATCH --mem=30G  # Requested Memory
-#SBATCH -p gpu-preempt # Partition
+#SBATCH -p gpu # Partition
 #SBATCH --gres=gpu:1  # Number of GPUs
 #SBATCH -t 2-00:00:00  # Job time limit
 #SBATCH -o ./jobs-exp/%j.out  # %j = job ID

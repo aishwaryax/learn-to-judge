@@ -2,10 +2,10 @@
 #SBATCH -c 2  # Number of Cores per Task
 #SBATCH --mem=30G  # Requested Memory
 #SBATCH -p gpu-preempt # Partition
-#SBATCH --gres=gpu:2  # Number of GPUs
+#SBATCH --gres=gpu:1  # Number of GPUs
 #SBATCH -t 2-00:00:00  # Job time limit
 #SBATCH -o ./jobs-exp/%j.out  # %j = job ID
-#SBATCH --constraint="vram80"
+#SBATCH --constraint="vram40"
 
 
 # Create the jobs-exp directory if it doesn't exist
@@ -17,7 +17,8 @@ fi
 model_repo="$1"
 dataset_path="$2"
 save_path="$3"
+data_percent="$4"
 
 # Run the Python script
 export PYTHONPATH=$(pwd):$PYTHONPATH
-python train/sft_quantized_relative.py --model_repo $model_repo --dataset_path $dataset_path --save_path $save_path 
+python train/sft_quantized_absolute.py --model_repo $model_repo --dataset_path $dataset_path --save_path $save_path --data_percent $data_percent
