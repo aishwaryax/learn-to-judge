@@ -46,7 +46,7 @@ def run_for_seed(args_tuple):
     total = len(df)
 
     # Define percentages to sample
-    dataset_sizes = [1, 2, 5, 10]
+    dataset_sizes = [20, 50]
 
     # Prepare metrics directory
     metrics_dir = Path(args.output_base) / 'metrics'
@@ -57,11 +57,11 @@ def run_for_seed(args_tuple):
         n = max(1, int(total * size / 100.0))
         subset = df.sample(n, random_state=seed)
 
-        # Save subset
-        subset_dir = Path(args.output_base) / f"subset_{size}_seed_{seed}"
-        subset_dir.mkdir(parents=True, exist_ok=True)
-        subset_path = subset_dir / 'data.csv'
-        subset.to_csv(subset_path, index=False)
+        # # Save subset
+        # subset_dir = Path(args.output_base) / f"subset_{size}_seed_{seed}"
+        # subset_dir.mkdir(parents=True, exist_ok=True)
+        # subset_path = subset_dir / 'data.csv'
+        # subset.to_csv(subset_path, index=False)
 
         # Prepare model output dir
         save_dir = Path(args.output_base) / f"model_{size}_seed_{seed}"
@@ -71,12 +71,14 @@ def run_for_seed(args_tuple):
         train_cmd = [
             'python', args.train_script,
             '--model_repo', args.model_repo,
-            '--dataset_path', str(subset_path),
+            '--dataset_path', args.dataset_path,
             '--save_path', str(save_dir),
             '--epochs', str(args.epochs),
             '--batch_size', str(args.batch_size),
             '--lr', str(args.lr),
             '--reg_lambda', str(args.reg_lambda),
+            '--seed', str(seed),
+            '--data_percent', str(size),
         ]
         print(f"[Seed {seed}] Training with {size}% data...")
         subprocess.run(train_cmd, check=True)
@@ -124,7 +126,7 @@ def main():
                         help='Path to inference script')
     parser.add_argument('--epochs', type=int, default=2,
                         help='Training epochs')
-    parser.add_argument('--batch_size', type=int, default=4,
+    parser.add_argument('--batch_size', type=int, default=8,
                         help='Batch size for both train/infer')
     parser.add_argument('--lr', type=float, default=5e-6,
                         help='Learning rate')
@@ -133,7 +135,7 @@ def main():
     args = parser.parse_args()
 
     # Setup seeds
-    seeds = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]  # 0–9
+    seeds = [0, 1, 2, 3, 4]  # 0–9
     args_tuples = [(args, seed) for seed in seeds]
 
     # Run sequentially
