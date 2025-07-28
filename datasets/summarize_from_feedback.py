@@ -97,10 +97,7 @@ def parse_feedback_and_score_llama(text):
 
 
 def get_parser():
-    if 'prometheus' in args.model_repo:
-        return parse_feedback_and_score_prometheus
-    elif 'llama' in args.model_repo:
-        return parse_feedback_and_score_llama
+    return parse_feedback_and_score_prometheus
 
 summarization_transformed_dataset = dataset[args.dataset_fold].map(
     transform_data, 
